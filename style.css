@@ -173,7 +173,8 @@ button { font: inherit; color: inherit; }
   background: var(--card); padding: 8px; border-radius: 14px;
   box-shadow: 0 6px 20px rgba(0,0,0,.25);
 }
-.sel-bar .btn { padding: 10px 20px; }
+.sel-bar .btn { padding: 10px 16px; white-space: nowrap; }
+@media (max-width: 420px) { .sel-bar { gap: 5px; padding: 6px; } .sel-bar .btn { padding: 10px 11px; font-size: 14px; } }
 kbd {
   display: none; font: 600 11px/1 ui-monospace, monospace; padding: 2px 5px; margin-left: 4px;
   border: 1px solid currentColor; border-radius: 4px; opacity: .6; vertical-align: 1px;

@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v15';
+const BUILD = 'v16';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -450,7 +450,7 @@ function showHelp() {
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
-    '· 아래 [주석] 또는 [빈칸]을 누르세요',
+    '· 아래 [주석] [빈칸] [빈칸+주석] 중 하나를 누르세요',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
     '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
@@ -465,7 +465,7 @@ function showHelp() {
     '· 우클릭: 표시 수정 · 삭제 메뉴',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
-    '· 선택 후 Z 주석 · X 빈칸 · Esc 취소',
+    '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
     '· A 100%↔200% · Ctrl+Z 되돌리기',
     '',
@@ -986,6 +986,18 @@ $('#btn-sel-blank').onclick = () => {
   const s = clearSel();
   if (s) addItem({ id: uid(), type: 'blank', ...s });
 };
+// 빈칸 + 주석을 같은 영역에 한 번에 (되돌리기 한 번에 둘 다 취소)
+$('#btn-sel-both').onclick = async () => {
+  const s = V.sel;
+  if (!s) return;
+  const text = await promptBox('빈칸 + 주석', '', { multiline: true, placeholder: '빈칸에 달 주석' });
+  clearSel();
+  if (!text || !text.trim()) return;
+  snapshot();
+  V.items.push({ id: uid(), type: 'blank', ...s }, { id: uid(), type: 'note', ...s, text: text.trim() });
+  renderMarks(s.page);
+  saveMarks();
+};
 $('#btn-sel-note').onclick = async () => {
   const s = V.sel;
   if (!s) return;
@@ -1328,7 +1340,7 @@ scroller.addEventListener('wheel', (e) => {
 
 /* =========================================================
    단축키 (한글 입력 상태여도 동작하도록 e.code 사용)
-   - 영역 선택 후: Z 주석 · X 빈칸 · Esc 취소
+   - 영역 선택 후: Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소
    - Ctrl+Z 되돌리기 · A 100%↔200%
    - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
    ========================================================= */
@@ -1357,6 +1369,7 @@ document.addEventListener('keydown', (e) => {
   if (V.sel && !$('#sel-bar').hidden) {
     if (e.code === 'KeyZ') { e.preventDefault(); $('#btn-sel-note').click(); return; }
     if (e.code === 'KeyX') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
+    if (e.code === 'KeyC') { e.preventDefault(); $('#btn-sel-both').click(); return; }
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
   if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }
