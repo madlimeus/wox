@@ -210,7 +210,7 @@ kbd {
 .modal-body textarea { min-height: 110px; resize: vertical; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 .modal-actions.list { flex-direction: column; margin-top: 0; }
-.modal-actions.list .btn { text-align: left; padding: 13px 14px; font-weight: 500; }
+.modal-actions.list .btn { text-align: left; padding: 13px 14px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; }
 .modal-actions.list .btn.danger { background: #fff; color: var(--danger); border-color: var(--line); }
 
 /* ---------- 토스트 ---------- */

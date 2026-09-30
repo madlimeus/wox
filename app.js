@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v16';
+const BUILD = 'v17';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -90,6 +90,12 @@ function showModal({ title = '', body = null, actions = [], list = false, onOpen
       const btn = document.createElement('button');
       btn.className = 'btn ' + (act.cls || '');
       btn.textContent = act.label;
+      if (act.key || act.hint) { // 메뉴 단축키: 버튼 옆에 표시하고 그 키로 누를 수 있게
+        const k = document.createElement('kbd');
+        k.textContent = act.key || act.hint;
+        btn.appendChild(k);
+        if (act.key) btn.dataset.key = 'Key' + act.key;
+      }
       btn.onclick = () => closeModal(typeof act.value === 'function' ? act.value() : act.value);
       a.appendChild(btn);
     }
@@ -107,7 +113,7 @@ function closeModal(v) {
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(null); });
 
 const sheet = (title, items) =>
-  showModal({ title, list: true, actions: [...items, { label: '취소', value: null, cls: 'ghost' }] });
+  showModal({ title, list: true, actions: [...items, { label: '취소', value: null, cls: 'ghost', hint: 'Esc' }] });
 const confirmBox = (title, msg, okLabel = '확인', danger = false) =>
   showModal({
     title, body: msg,
@@ -462,7 +468,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 이동 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
@@ -886,17 +892,17 @@ async function handleLongPress(target) {
   if (it.type === 'check') {
     if (V.checkMode) { removeItem(it.id); toast('체크칸을 지웠어요'); return; }
     const v = await sheet('체크칸', [
-      { label: '체크칸 이동', value: 'move' },
-      { label: '표시 지우기 (빈 네모로)', value: 'reset' },
-      { label: '체크칸 삭제', value: 'del', cls: 'danger' },
+      { label: '체크칸 이동', value: 'move', key: 'Q' },
+      { label: '표시 지우기 (빈 네모로)', value: 'reset', key: 'W' },
+      { label: '체크칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
     else if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'note') {
     const v = await sheet('주석', [
-      { label: '주석 수정', value: 'edit' },
-      { label: '주석 삭제', value: 'del', cls: 'danger' },
+      { label: '주석 수정', value: 'edit', key: 'E' },
+      { label: '주석 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'edit') {
       const text = await promptBox('주석 수정', it.text, { multiline: true });
@@ -904,8 +910,8 @@ async function handleLongPress(target) {
     } else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'blank') {
     const v = await sheet('빈칸', [
-      { label: '이 빈칸에 주석 달기', value: 'note' },
-      { label: '빈칸 삭제', value: 'del', cls: 'danger' },
+      { label: '이 빈칸에 주석 달기', value: 'note', key: 'Z' },
+      { label: '빈칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'note') {
       const text = await promptBox('주석 달기', '', { multiline: true });
@@ -1349,6 +1355,10 @@ document.addEventListener('keydown', (e) => {
   if (modalResolve) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(null); return; }
     const field = e.target.closest && e.target.closest('#modal-body textarea, #modal-body input');
+    if (!field && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const hit = document.querySelector(`#modal-actions .btn[data-key="${e.code}"]`);
+      if (hit) { e.preventDefault(); hit.click(); return; }
+    }
     if (field && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       $('#modal-actions .btn.primary').click();
