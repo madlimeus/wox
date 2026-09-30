@@ -437,8 +437,8 @@ function showHelp() {
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
     '· 아래 [주석] 또는 [빈칸]을 누르세요',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
-    '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
-    '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
+    '· 주석: 주황 세모를 탭하면 주석이 열리고 다시 탭하면 닫혀요',
+    '· 빈칸과 주석이 겹치면: 세모 = 주석 열기·닫기 / 나머지 부분 = 빈칸 가리기·보이기 (가려진 상태에서도 세모로 주석만 먼저 볼 수 있어요)',
     '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
     '',
     '■ 기타',
@@ -742,6 +742,18 @@ function renderMarks(pnum) {
     if (it.type === 'blank') d.classList.add(r.revealed ? 'revealed' : 'covered');
     if (it.type === 'note' && r.open) { d.classList.add('open'); pops.push(it); }
     L.appendChild(d);
+    if (it.type === 'note') {
+      // 세모: 세로 = 겹친 빈칸의 세로(없으면 주석 영역 세로), 가로 = 세로와 같은 길이
+      const b = blanksOver(it)[0];
+      const top = b ? b.y : it.y, h = b ? b.h : it.h;
+      const tri = div('note-tri');
+      tri.dataset.id = it.id;
+      tri.style.left = it.x * 100 + '%';
+      tri.style.top = top * 100 + '%';
+      tri.style.height = h * 100 + '%';
+      tri.style.width = (h * pg.h / pg.w) * 100 + '%';
+      L.appendChild(tri);
+    }
   }
   for (const n of pops) {
     const p = div('note-pop');
@@ -801,21 +813,18 @@ function tapBlank(b) {
   renderMarks(b.page);
 }
 
-// 겹친 경우: 빈칸 → (탭) 글자+주석표시 → (탭) 주석 열림 → (탭) 닫힘 → (탭) 다시 빈칸
-function tapNote(n) {
+// 세모 = 주석 열기/닫기 (빈칸이 가려져 있어도 세모는 위에 보여서 힌트처럼 먼저 볼 수 있다)
+function toggleNote(n) {
   const r = rt(n.id);
-  const parent = blanksOver(n).find((b) => rt(b.id).revealed);
-  if (r.open) {
-    r.open = false;
-    r.justClosed = !!parent;
-  } else if (r.justClosed && parent) {
-    r.justClosed = false;
-    rt(parent.id).revealed = false;
-  } else {
-    r.open = true;
-    r.justClosed = false;
-  }
+  r.open = !r.open;
   renderMarks(n.page);
+}
+
+// 주석 영역의 세모 아닌 곳 = 겹친 빈칸 가리기/보이기, 겹친 빈칸이 없으면 주석 열기/닫기
+function tapNote(n) {
+  const b = blanksOver(n)[0];
+  if (b) tapBlank(b);
+  else toggleNote(n);
 }
 
 function closeAllNotes() {
@@ -842,7 +851,10 @@ function handleTap(target, x, y) {
   if (!it) return;
   if (it.type === 'check') cycleCheck(it);
   else if (it.type === 'blank') tapBlank(it);
-  else if (it.type === 'note') tapNote(it);
+  else if (it.type === 'note') {
+    if (markEl.classList.contains('note-tri')) toggleNote(it);
+    else tapNote(it);
+  }
 }
 
 async function handleLongPress(target) {
