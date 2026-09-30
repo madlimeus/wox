@@ -128,7 +128,6 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 2.03cqw; line-height: 1; z-index: 4; cursor: pointer;
 }
-.chk::after { content: ""; position: absolute; inset: -1.6cqw; } /* 손가락 터치 영역 넓히기 */
 /* 네모는 연하게, V·W 글자는 진하게 */
 .chk.s1 { color: var(--v); border-color: rgba(31,111,235,.35); }
 .chk.s2 { color: var(--w); border-color: rgba(214,69,69,.35); }
