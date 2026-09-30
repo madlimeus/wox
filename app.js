@@ -443,6 +443,15 @@ function showHelp() {
     '',
     '■ 기타',
     '· 두 손가락으로 벌리면 확대, 오므리면 축소',
+    '· 위의 100% 버튼: 100% ↔ 200% 바로 전환',
+    '',
+    '■ PC (마우스 · 키보드)',
+    '· 그냥 드래그하면 영역 선택',
+    '· 우클릭: 표시 수정 · 삭제 메뉴',
+    '· 선택 후 N 주석 · B 빈칸 · Esc 취소',
+    '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
+    '· Z 100%↔200% · Ctrl+Z 되돌리기',
+    '',
     '· ↶ 되돌리기',
     '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
   ].join('\n');
@@ -585,8 +594,18 @@ function updatePageInd() {
   const mid = scroller.scrollTop + scroller.clientHeight / 3;
   let cur = 1;
   for (const pg of V.pages) if (pg.el.offsetTop <= mid) cur = pg.num;
-  $('#page-ind').textContent = `${cur} / ${V.pages.length}쪽 · ${Math.round(V.zoom * 100)}%`;
+  $('#page-ind').textContent = `${cur} / ${V.pages.length}쪽`;
+  $('#btn-zoom').textContent = `${Math.round(V.zoom * 100)}%`;
 }
+
+// 100% ↔ 200% 바로 전환 (화면 가운데를 기준으로)
+function toggleZoom() {
+  const mx = scroller.clientWidth / 2, my = scroller.clientHeight / 2;
+  applyZoom(Math.abs(V.zoom - 1) < 0.05 ? 2 : 1, {
+    cx: scroller.scrollLeft + mx, cy: scroller.scrollTop + my, mx, my,
+  });
+}
+$('#btn-zoom').onclick = toggleZoom;
 let scrollRaf = 0;
 scroller.addEventListener('scroll', () => {
   if (scrollRaf) return;
@@ -996,10 +1015,10 @@ $('#btn-view-menu').onclick = async () => {
 const LONG_MS = 380, MOVE_TOL = 10;
 const G = { mode: null, timer: 0 };
 
-function gBegin(x, y, target) {
+function gBegin(x, y, target, mouse = false) {
   clearTimeout(G.timer);
   Object.assign(G, {
-    mode: 'pending', sx: x, sy: y, target,
+    mode: 'pending', sx: x, sy: y, target, mouse,
     pageEl: target.closest('.page'),
     chkEl: V.checkMode ? target.closest('.chk') : null,
   });
@@ -1024,8 +1043,12 @@ function gMove(x, y) {
       }
       return true;
     }
-    if (dist > MOVE_TOL) { clearTimeout(G.timer); G.mode = 'scroll'; }
-    return false;
+    if (dist > MOVE_TOL) {
+      clearTimeout(G.timer);
+      // 마우스는 드래그해도 스크롤되지 않으니 꾹 누를 필요 없이 바로 선택
+      if (G.mouse) G.mode = 'held';
+      else { G.mode = 'scroll'; return false; }
+    } else return false;
   }
   if (G.mode === 'held') {
     if (dist > MOVE_TOL && G.pageEl && !V.checkMode) {
@@ -1146,14 +1169,24 @@ scroller.addEventListener('touchcancel', () => {
   if (G.mode === 'select') clearSel();
   G.mode = null;
 });
-scroller.addEventListener('contextmenu', (e) => e.preventDefault());
+// 우클릭 = 폰에서 꾹 누르기 (표시 수정·삭제 메뉴)
+// 폰에서 꾹 누를 때도 contextmenu가 오지만 그건 터치 제스처가 이미 처리한다
+scroller.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (Date.now() - lastTouch < 1000) return;
+  clearTimeout(G.timer);
+  G.mode = null;
+  mouseDown = false;
+  handleLongPress(e.target);
+});
 
-/* PC 마우스로도 테스트할 수 있게 */
+/* PC 마우스 */
 let mouseDown = false;
 scroller.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || Date.now() - lastTouch < 1000) return;
+  e.preventDefault(); // 드래그할 때 글자·이미지 끌기 방지
   mouseDown = true;
-  gBegin(e.clientX, e.clientY, e.target);
+  gBegin(e.clientX, e.clientY, e.target, true);
 });
 window.addEventListener('mousemove', (e) => { if (mouseDown) gMove(e.clientX, e.clientY); });
 window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; gEnd(); } });
@@ -1164,6 +1197,35 @@ scroller.addEventListener('wheel', (e) => {
   const mx = e.clientX - sr.left, my = e.clientY - sr.top;
   applyZoom(V.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), { cx: scroller.scrollLeft + mx, cy: scroller.scrollTop + my, mx, my });
 }, { passive: false });
+
+/* =========================================================
+   단축키 (한글 입력 상태여도 동작하도록 e.code 사용)
+   - 영역 선택 후: N 주석 · B 빈칸 · Esc 취소
+   - Ctrl+Z 되돌리기 · Z 100%↔200%
+   - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
+   ========================================================= */
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (modalResolve) {
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(null); return; }
+    const field = e.target.closest && e.target.closest('#modal-body textarea, #modal-body input');
+    if (field && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      $('#modal-actions .btn.primary').click();
+    }
+    return;
+  }
+  if (!V.file) return;
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); $('#btn-undo').click(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (V.sel && !$('#sel-bar').hidden) {
+    if (e.code === 'KeyN') { e.preventDefault(); $('#btn-sel-note').click(); return; }
+    if (e.code === 'KeyB') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
+  }
+  if (e.code === 'KeyZ') { e.preventDefault(); toggleZoom(); }
+  else if (e.key === 'Escape' && V.checkMode) setCheckMode(false);
+});
 
 /* =========================================================
    시작

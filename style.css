@@ -123,14 +123,15 @@ button { font: inherit; color: inherit; }
 .chk {
   position: absolute; transform: translate(-50%, -50%);
   width: 3cqw; height: 3cqw;
-  border: max(1px, .25cqw) solid #333; border-radius: .5cqw;
-  background: rgba(255,255,255,.85);
+  border: max(1px, .22cqw) solid rgba(40,45,60,.3); border-radius: .5cqw;
+  background: rgba(255,255,255,.6);
   display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 2.5cqw; line-height: 1; z-index: 4; cursor: pointer;
 }
 .chk::after { content: ""; position: absolute; inset: -1.6cqw; } /* 손가락 터치 영역 넓히기 */
-.chk.s1 { color: var(--v); border-color: var(--v); }
-.chk.s2 { color: var(--w); border-color: var(--w); }
+/* 네모는 연하게, V·W 글자는 진하게 */
+.chk.s1 { color: var(--v); border-color: rgba(31,111,235,.35); }
+.chk.s2 { color: var(--w); border-color: rgba(214,69,69,.35); }
 .chk.dragging { opacity: .6; }
 .checkmode .chk { box-shadow: 0 0 0 .4cqw rgba(255,193,69,.7); }
 
@@ -173,6 +174,18 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 6px 20px rgba(0,0,0,.25);
 }
 .sel-bar .btn { padding: 10px 20px; }
+kbd {
+  display: none; font: 600 11px/1 ui-monospace, monospace; padding: 2px 5px; margin-left: 4px;
+  border: 1px solid currentColor; border-radius: 4px; opacity: .6; vertical-align: 1px;
+}
+@media (hover: hover) and (pointer: fine) { kbd { display: inline-block; } } /* 키보드 있는 PC에서만 표시 */
+
+.zoom-btn {
+  height: 30px; padding: 0 10px; border: 1px solid rgba(255,255,255,.4); border-radius: 999px;
+  background: transparent; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  margin-right: 4px; font-variant-numeric: tabular-nums;
+}
+.zoom-btn:active { background: rgba(255,255,255,.15); }
 
 /* ---------- 모달 ---------- */
 .modal {
