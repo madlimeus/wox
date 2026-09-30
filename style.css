@@ -122,11 +122,11 @@ button { font: inherit; color: inherit; }
 /* 체크칸 */
 .chk {
   position: absolute; transform: translate(-50%, -50%);
-  width: 2.7cqw; height: 2.7cqw;
-  border: max(1px, .22cqw) solid rgba(40,45,60,.3); border-radius: .45cqw;
+  width: 2.43cqw; height: 2.43cqw;
+  border: max(1px, .22cqw) solid rgba(40,45,60,.3); border-radius: .4cqw;
   background: rgba(255,255,255,.6);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 2.25cqw; line-height: 1; z-index: 4; cursor: pointer;
+  font-weight: 800; font-size: 2.03cqw; line-height: 1; z-index: 4; cursor: pointer;
 }
 .chk::after { content: ""; position: absolute; inset: -1.6cqw; } /* 손가락 터치 영역 넓히기 */
 /* 네모는 연하게, V·W 글자는 진하게 */
