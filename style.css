@@ -218,3 +218,6 @@ kbd {
   background: rgba(20,25,40,.9); color: #fff; padding: 10px 16px; border-radius: 10px;
   font-size: 14px; z-index: 200; max-width: 90vw; text-align: center;
 }
+
+/* 오른쪽 버튼으로 화면 끄는 중 */
+.scroller.panning, .scroller.panning * { cursor: grabbing !important; }

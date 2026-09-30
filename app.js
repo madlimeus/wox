@@ -448,6 +448,7 @@ function showHelp() {
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
     '· 우클릭: 표시 수정 · 삭제 메뉴',
+    '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
     '· A 100%↔200% · Ctrl+Z 되돌리기',
@@ -1199,6 +1200,7 @@ scroller.addEventListener('touchcancel', () => {
 scroller.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (Date.now() - lastTouch < 1000) return;
+  if (pan.moved) { pan.moved = false; return; } // 오른쪽 버튼으로 화면을 끈 경우엔 메뉴 안 띄움
   clearTimeout(G.timer);
   G.mode = null;
   mouseDown = false;
@@ -1215,6 +1217,28 @@ scroller.addEventListener('mousedown', (e) => {
 });
 window.addEventListener('mousemove', (e) => { if (mouseDown) gMove(e.clientX, e.clientY); });
 window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; gEnd(); } });
+
+/* 오른쪽 버튼 누른 채 끌기 = 화면 잡고 이동 (끌지 않고 떼면 기존 우클릭 메뉴) */
+const pan = { on: false, moved: false, x: 0, y: 0, sl: 0, st: 0 };
+scroller.addEventListener('mousedown', (e) => {
+  if (e.button !== 2 || Date.now() - lastTouch < 1000) return;
+  Object.assign(pan, { on: true, moved: false, x: e.clientX, y: e.clientY, sl: scroller.scrollLeft, st: scroller.scrollTop });
+});
+window.addEventListener('mousemove', (e) => {
+  if (!pan.on) return;
+  const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+  if (!pan.moved && Math.hypot(dx, dy) < 5) return;
+  if (!pan.moved) { pan.moved = true; scroller.classList.add('panning'); }
+  scroller.scrollLeft = pan.sl - dx;
+  scroller.scrollTop = pan.st - dy;
+});
+window.addEventListener('mouseup', (e) => {
+  if (e.button !== 2 || !pan.on) return;
+  pan.on = false;
+  scroller.classList.remove('panning');
+  // 창 밖에서 떼면 contextmenu가 안 오므로 잠시 뒤 표시 초기화
+  if (pan.moved) setTimeout(() => { pan.moved = false; }, 300);
+});
 scroller.addEventListener('wheel', (e) => {
   if (!e.ctrlKey || !V.file) return;
   e.preventDefault();
