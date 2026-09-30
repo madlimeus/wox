@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v17';
+const BUILD = 'v18';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -124,11 +124,52 @@ function promptBox(title, init = '', { multiline = false, placeholder = '' } = {
   if (!multiline) el.type = 'text';
   el.value = init;
   el.placeholder = placeholder;
+  let body = el;
+  if (multiline) { // 주석 입력: 굵게 (Ctrl+B 또는 버튼) → **글자**
+    body = div('');
+    const tools = div('note-tools');
+    const bBtn = document.createElement('button');
+    bBtn.type = 'button';
+    bBtn.className = 'btn tool-btn';
+    bBtn.innerHTML = '<b>B</b> 굵게';
+    bBtn.onmousedown = (e) => e.preventDefault(); // 입력창 선택 유지
+    bBtn.onclick = () => { toggleBold(el); el.focus(); };
+    const hint = document.createElement('span');
+    hint.className = 'tool-hint';
+    hint.textContent = 'Ctrl+B · **굵게**로 저장돼요';
+    tools.append(bBtn, hint);
+    body.append(tools, el);
+    el.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyB') { e.preventDefault(); toggleBold(el); }
+    });
+  }
   return showModal({
-    title, body: el,
+    title, body,
     actions: [{ label: '취소', value: null, cls: 'ghost' }, { label: '저장', value: () => el.value, cls: 'primary' }],
     onOpen: () => setTimeout(() => el.focus(), 60),
   });
+}
+
+// 선택한 글자 앞뒤에 ** 를 붙이거나(굵게) 떼기(해제). 선택이 없으면 **|** 넣고 커서를 가운데로
+function toggleBold(el) {
+  const v = el.value, a = el.selectionStart, b = el.selectionEnd;
+  const sel = v.slice(a, b);
+  let out, s, e;
+  if (v.slice(a - 2, a) === '**' && v.slice(b, b + 2) === '**') {
+    out = v.slice(0, a - 2) + sel + v.slice(b + 2); s = a - 2; e = b - 2;
+  } else if (sel.length > 4 && sel.startsWith('**') && sel.endsWith('**')) {
+    out = v.slice(0, a) + sel.slice(2, -2) + v.slice(b); s = a; e = b - 4;
+  } else {
+    out = v.slice(0, a) + '**' + sel + '**' + v.slice(b); s = a + 2; e = b + 2;
+  }
+  el.value = out;
+  el.setSelectionRange(s, e);
+}
+
+// 주석 글자 → 화면용 HTML (**굵게**만 허용, 나머지는 그대로 글자로)
+function noteHtml(text) {
+  const esc = String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return esc.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 }
 
 let toastT = null;
@@ -459,6 +500,7 @@ function showHelp() {
     '· 아래 [주석] [빈칸] [빈칸+주석] 중 하나를 누르세요',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
+    '· 주석 굵게: 글자 고르고 Ctrl+B (또는 [B 굵게] 버튼) → **글자**',
     '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
     '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
     '',
@@ -784,7 +826,7 @@ function renderMarks(pnum) {
   }
   for (const n of pops) {
     const p = div('note-pop');
-    p.textContent = n.text;
+    p.innerHTML = noteHtml(n.text);
     if (n.x > 0.55) p.style.right = (1 - n.x - n.w) * 100 + '%';
     else p.style.left = n.x * 100 + '%';
     if (n.y + n.h > 0.8) p.style.bottom = `calc(${(1 - n.y) * 100}% + 4px)`;
