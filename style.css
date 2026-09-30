@@ -139,9 +139,9 @@ button { font: inherit; color: inherit; }
   position: absolute; background: var(--note-tint); z-index: 2; cursor: pointer;
   border-radius: 2px;
 }
-/* 주석 세모: 따로 떼어 빈칸보다 위에 둔다 → 가려진 상태에서도 눌러서 주석만 볼 수 있음 */
+/* 주석 세모: 표시만 하고 누르면 아래 주석 영역이 눌린다 */
 .note-tri {
-  position: absolute; z-index: 5; cursor: pointer;
+  position: absolute; z-index: 5; pointer-events: none;
   background: rgba(255,138,0,.3); /* 반투명: 뒤 글씨가 보이게 */
   clip-path: polygon(0 0, 100% 0, 0 100%);
 }

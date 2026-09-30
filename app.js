@@ -437,8 +437,8 @@ function showHelp() {
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
     '· 아래 [주석] 또는 [빈칸]을 누르세요',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
-    '· 주석: 주황 세모를 탭하면 주석이 열리고 다시 탭하면 닫혀요',
-    '· 빈칸과 주석이 겹치면: 빈칸을 열어야 세모가 보여요. 세모 = 주석 열기·닫기 / 나머지 = 빈칸 가리기·보이기',
+    '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
+    '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
     '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
     '',
     '■ 기타',
@@ -814,18 +814,21 @@ function tapBlank(b) {
   renderMarks(b.page);
 }
 
-// 세모 = 주석 열기/닫기 (빈칸이 가려져 있어도 세모는 위에 보여서 힌트처럼 먼저 볼 수 있다)
-function toggleNote(n) {
-  const r = rt(n.id);
-  r.open = !r.open;
-  renderMarks(n.page);
-}
-
-// 주석 영역의 세모 아닌 곳 = 겹친 빈칸 가리기/보이기, 겹친 빈칸이 없으면 주석 열기/닫기
+// 겹친 경우: 빈칸 → (탭) 글자+주석표시 → (탭) 주석 열림 → (탭) 닫힘 → (탭) 다시 빈칸
 function tapNote(n) {
-  const b = blanksOver(n)[0];
-  if (b) tapBlank(b);
-  else toggleNote(n);
+  const r = rt(n.id);
+  const parent = blanksOver(n).find((b) => rt(b.id).revealed);
+  if (r.open) {
+    r.open = false;
+    r.justClosed = !!parent;
+  } else if (r.justClosed && parent) {
+    r.justClosed = false;
+    rt(parent.id).revealed = false;
+  } else {
+    r.open = true;
+    r.justClosed = false;
+  }
+  renderMarks(n.page);
 }
 
 function closeAllNotes() {
@@ -852,10 +855,7 @@ function handleTap(target, x, y) {
   if (!it) return;
   if (it.type === 'check') cycleCheck(it);
   else if (it.type === 'blank') tapBlank(it);
-  else if (it.type === 'note') {
-    if (markEl.classList.contains('note-tri')) toggleNote(it);
-    else tapNote(it);
-  }
+  else if (it.type === 'note') tapNote(it);
 }
 
 async function handleLongPress(target) {
