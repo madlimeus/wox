@@ -448,9 +448,9 @@ function showHelp() {
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
     '· 우클릭: 표시 수정 · 삭제 메뉴',
-    '· 선택 후 N 주석 · B 빈칸 · Esc 취소',
+    '· 선택 후 Z 주석 · X 빈칸 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
-    '· Z 100%↔200% · Ctrl+Z 되돌리기',
+    '· A 100%↔200% · Ctrl+Z 되돌리기',
     '',
     '· ↶ 되돌리기',
     '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
@@ -1212,8 +1212,8 @@ scroller.addEventListener('wheel', (e) => {
 
 /* =========================================================
    단축키 (한글 입력 상태여도 동작하도록 e.code 사용)
-   - 영역 선택 후: N 주석 · B 빈칸 · Esc 취소
-   - Ctrl+Z 되돌리기 · Z 100%↔200%
+   - 영역 선택 후: Z 주석 · X 빈칸 · Esc 취소
+   - Ctrl+Z 되돌리기 · A 100%↔200%
    - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
    ========================================================= */
 document.addEventListener('keydown', (e) => {
@@ -1231,11 +1231,11 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); $('#btn-undo').click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (V.sel && !$('#sel-bar').hidden) {
-    if (e.code === 'KeyN') { e.preventDefault(); $('#btn-sel-note').click(); return; }
-    if (e.code === 'KeyB') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
+    if (e.code === 'KeyZ') { e.preventDefault(); $('#btn-sel-note').click(); return; }
+    if (e.code === 'KeyX') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
-  if (e.code === 'KeyZ') { e.preventDefault(); toggleZoom(); }
+  if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }
   else if (e.key === 'Escape' && V.checkMode) setCheckMode(false);
 });
 
