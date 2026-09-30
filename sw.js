@@ -1,5 +1,5 @@
 // WOX 오프라인 캐시. 앱 파일을 고치면 VERSION을 올린다.
-const VERSION = 'wox-v6';
+const VERSION = 'wox-v7';
 const ASSETS = [
   './',
   'index.html',
@@ -196,8 +196,13 @@ const ASSETS = [
   'lib/standard_fonts/LiberationSans-Regular.ttf',
 ];
 
+// cache: 'reload' → 브라우저 HTTP 캐시에 남은 옛 파일 말고 서버의 최신 파일을 받는다
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(VERSION)
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -208,14 +213,32 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// 앱 본체(html/js/css/manifest): 인터넷 되면 최신 파일, 안 되면 저장본
+// lib/·icons/ (PDF 엔진·글꼴·아이콘): 거의 안 바뀌니 저장본 먼저
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET') return;
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return;
+  const isStatic = /\/(lib|icons)\//.test(url.pathname);
+
+  if (isStatic) {
+    e.respondWith(caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req)));
+    return;
+  }
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then((hit) => {
-      if (hit) return hit;
-      return fetch(e.request).catch(() =>
-        e.request.mode === 'navigate' ? caches.match('index.html') : Response.error()
-      );
-    })
+    fetch(req, { cache: 'no-cache' })
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() =>
+        caches.match(req, { ignoreSearch: true }).then((hit) =>
+          hit || (req.mode === 'navigate' ? caches.match('index.html') : Response.error())
+        )
+      )
   );
 });
