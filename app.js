@@ -448,6 +448,7 @@ function showHelp() {
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
     '· 우클릭: 표시 수정 · 삭제 메뉴',
+    '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
@@ -646,6 +647,7 @@ function saveViewState() {
 
 async function closeViewer() {
   if (!V.file) { showScreen('library'); return; }
+  if (V.moving) endMoveCheck(true);
   saveViewState();
   await flushMarks();
   V.token++;
@@ -692,6 +694,7 @@ function snapshot() {
   if (V.undo.length > 80) V.undo.shift();
 }
 $('#btn-undo').onclick = () => {
+  if (V.moving) return;
   if (!V.undo.length) { toast('되돌릴 게 없어요'); return; }
   V.items = JSON.parse(V.undo.pop());
   renderAllMarks();
@@ -730,6 +733,7 @@ function renderMarks(pnum) {
       d.style.top = it.y * 100 + '%';
       d.textContent = ['', 'V', 'W'][it.state];
       d.dataset.id = it.id;
+      if (V.moving && V.moving.id === it.id) d.classList.add('moving');
       L.appendChild(d);
       continue;
     }
@@ -867,10 +871,12 @@ async function handleLongPress(target) {
   if (it.type === 'check') {
     if (V.checkMode) { removeItem(it.id); toast('체크칸을 지웠어요'); return; }
     const v = await sheet('체크칸', [
+      { label: '체크칸 이동', value: 'move' },
       { label: '표시 지우기 (빈 네모로)', value: 'reset' },
       { label: '체크칸 삭제', value: 'del', cls: 'danger' },
     ]);
-    if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
+    if (v === 'move') startMoveCheck(it);
+    else if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'note') {
     const v = await sheet('주석', [
@@ -892,6 +898,57 @@ async function handleLongPress(target) {
     } else if (v === 'del') removeItem(it.id);
   }
 }
+
+/* ---- 체크칸 하나 이동 (메뉴 → 끌기 → Enter 고정 / Esc 취소) ---- */
+function startMoveCheck(it) {
+  clearSel();
+  setCheckMode(false);
+  snapshot();
+  V.moving = { id: it.id, orig: { page: it.page, x: it.x, y: it.y } };
+  $('#move-bar').hidden = false;
+  scroller.classList.add('moving-chk');
+  renderMarks(it.page);
+}
+
+function moveCheckTo(x, y) {
+  const it = byId(V.moving.id);
+  if (!it) return;
+  const hit = document.elementFromPoint(x, y);
+  const pageEl = (hit && hit.closest('.page')) || V.pages[it.page - 1].el;
+  const r = pageEl.getBoundingClientRect();
+  const page = +pageEl.dataset.page;
+  const oldPage = it.page;
+  it.page = page;
+  it.x = clamp((x - r.left) / r.width, 0, 1);
+  it.y = clamp((y - r.top) / r.height, 0, 1);
+  const el = page === oldPage && V.pages[page - 1].layer.querySelector(`.chk[data-id="${it.id}"]`);
+  if (el) { el.style.left = it.x * 100 + '%'; el.style.top = it.y * 100 + '%'; }
+  else { renderMarks(oldPage); renderMarks(page); }
+}
+
+function nudgeCheck(dx, dy) {
+  const it = byId(V.moving.id);
+  if (!it) return;
+  const pg = V.pages[it.page - 1];
+  it.x = clamp(it.x + dx, 0, 1);
+  it.y = clamp(it.y + dy * (pg.w / pg.h), 0, 1); // 가로·세로 같은 거리만큼
+  renderMarks(it.page);
+}
+
+function endMoveCheck(keep) {
+  if (!V.moving) return;
+  const it = byId(V.moving.id);
+  const oldPage = it ? it.page : null;
+  if (!keep && it) { Object.assign(it, V.moving.orig); V.undo.pop(); }
+  V.moving = null;
+  $('#move-bar').hidden = true;
+  scroller.classList.remove('moving-chk');
+  if (oldPage) renderMarks(oldPage);
+  if (it) renderMarks(it.page);
+  if (keep) { saveMarks(); toast('이 위치에 고정했어요', 1500); }
+}
+$('#btn-move-ok').onclick = () => endMoveCheck(true);
+$('#btn-move-cancel').onclick = () => endMoveCheck(false);
 
 function addCheckAt(pageEl, x, y) {
   const r = pageEl.getBoundingClientRect();
@@ -1043,6 +1100,11 @@ const G = { mode: null, timer: 0 };
 
 function gBegin(x, y, target, mouse = false) {
   clearTimeout(G.timer);
+  if (V.moving) { // 체크칸 이동 모드: 누른 곳으로 바로 옮기고 끄는 대로 따라감
+    G.mode = 'movechk';
+    moveCheckTo(x, y);
+    return;
+  }
   Object.assign(G, {
     mode: 'pending', sx: x, sy: y, target, mouse,
     pageEl: target.closest('.page'),
@@ -1057,6 +1119,7 @@ function gBegin(x, y, target, mouse = false) {
 
 // true를 돌려주면 브라우저 기본 스크롤을 막는다
 function gMove(x, y) {
+  if (G.mode === 'movechk') { moveCheckTo(x, y); return true; }
   const dist = Math.hypot(x - G.sx, y - G.sy);
   if (G.mode === 'pending') {
     if (G.chkEl) {
@@ -1119,6 +1182,7 @@ function gEnd() {
   clearTimeout(G.timer);
   const mode = G.mode;
   G.mode = null;
+  if (mode === 'movechk') return true; // 고정은 Enter / [고정] 버튼으로
   if (mode === 'pending') handleTap(G.target, G.sx, G.sy);
   else if (mode === 'held') handleLongPress(G.target);
   else if (mode === 'select') {
@@ -1265,6 +1329,14 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (!V.file) return;
+  if (V.moving) {
+    const step = e.shiftKey ? 0.01 : 0.002;
+    const arrows = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (e.key === 'Enter') { e.preventDefault(); endMoveCheck(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); endMoveCheck(false); }
+    else if (arrows[e.key]) { e.preventDefault(); nudgeCheck(...arrows[e.key]); }
+    return;
+  }
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); $('#btn-undo').click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (V.sel && !$('#sel-bar').hidden) {

@@ -221,3 +221,14 @@ kbd {
 
 /* 오른쪽 버튼으로 화면 끄는 중 */
 .scroller.panning, .scroller.panning * { cursor: grabbing !important; }
+
+/* 체크칸 이동 모드 */
+.move-bar { align-items: center; }
+.move-hint { font-size: 13px; color: var(--muted); padding: 0 6px 0 8px; white-space: nowrap; }
+.chk.moving {
+  z-index: 8; background: #fff;
+  box-shadow: 0 0 0 .5cqw var(--accent), 0 2px 8px rgba(0,0,0,.3);
+  animation: chk-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes chk-pulse { to { box-shadow: 0 0 0 .9cqw rgba(255,193,69,.45), 0 2px 8px rgba(0,0,0,.3); } }
+.scroller.moving-chk .page { cursor: crosshair; }
