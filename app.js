@@ -438,7 +438,7 @@ function showHelp() {
     '· 아래 [주석] 또는 [빈칸]을 누르세요',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모를 탭하면 주석이 열리고 다시 탭하면 닫혀요',
-    '· 빈칸과 주석이 겹치면: 세모 = 주석 열기·닫기 / 나머지 부분 = 빈칸 가리기·보이기 (가려진 상태에서도 세모로 주석만 먼저 볼 수 있어요)',
+    '· 빈칸과 주석이 겹치면: 빈칸을 열어야 세모가 보여요. 세모 = 주석 열기·닫기 / 나머지 = 빈칸 가리기·보이기',
     '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
     '',
     '■ 기타',
@@ -742,9 +742,10 @@ function renderMarks(pnum) {
     if (it.type === 'blank') d.classList.add(r.revealed ? 'revealed' : 'covered');
     if (it.type === 'note' && r.open) { d.classList.add('open'); pops.push(it); }
     L.appendChild(d);
-    if (it.type === 'note') {
+    const b = it.type === 'note' ? blanksOver(it)[0] : null;
+    // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
+    if (it.type === 'note' && !(b && !rt(b.id).revealed)) {
       // 세모: 세로 = 겹친 빈칸의 세로(없으면 주석 영역 세로), 가로 = 세로와 같은 길이
-      const b = blanksOver(it)[0];
       const top = b ? b.y : it.y, h = b ? b.h : it.h;
       const tri = div('note-tri');
       tri.dataset.id = it.id;
