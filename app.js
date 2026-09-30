@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v21';
+const BUILD = 'v22';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -510,7 +510,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 이동 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 이동 · X X표시 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
@@ -794,7 +794,7 @@ function renderMarks(pnum) {
       const d = div('chk s' + it.state);
       d.style.left = it.x * 100 + '%';
       d.style.top = it.y * 100 + '%';
-      d.textContent = ['', 'V', 'W'][it.state];
+      d.textContent = ['', 'V', 'W', 'X'][it.state];
       d.dataset.id = it.id;
       if (V.moving && V.moving.id === it.id) d.classList.add('moving');
       L.appendChild(d);
@@ -866,7 +866,7 @@ function removeItem(id) {
 /* ---- 탭 동작 ---- */
 function cycleCheck(it) {
   snapshot();
-  it.state = (it.state + 1) % 3;
+  it.state = it.state === 3 ? 0 : (it.state + 1) % 3; // 탭: 빈칸→V→W→빈칸, X는 탭하면 빈칸으로
   renderMarks(it.page);
   saveMarks();
 }
@@ -935,10 +935,12 @@ async function handleLongPress(target) {
     if (V.checkMode) { removeItem(it.id); toast('체크칸을 지웠어요'); return; }
     const v = await sheet('체크칸', [
       { label: '체크칸 이동', value: 'move', key: 'Q' },
+      { label: 'X 표시', value: 'x', key: 'X' },
       { label: '표시 지우기 (빈 네모로)', value: 'reset', key: 'W' },
       { label: '체크칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'x') { snapshot(); it.state = 3; renderMarks(it.page); saveMarks(); }
     else if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'note') {
