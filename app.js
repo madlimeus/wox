@@ -1,0 +1,1175 @@
+'use strict';
+
+/* =========================================================
+   WOX — PDF 위에 체크칸(V/W) · 주석 · 빈칸을 다는 공부용 앱
+   모든 데이터는 폰 안(IndexedDB)에 저장된다.
+   ========================================================= */
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
+const PDF_OPTS = {
+  cMapUrl: new URL('lib/cmaps/', location.href).href,
+  cMapPacked: true,
+  standardFontDataUrl: new URL('lib/standard_fonts/', location.href).href,
+};
+
+const $ = (s) => document.querySelector(s);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const div = (cls) => { const d = document.createElement('div'); d.className = cls; return d; };
+
+/* ---------------- IndexedDB ---------------- */
+// folders: {id, name, created}
+// files:   {id, name, folderId, size, pages, added, opened, zoom, scrollRatio}
+// blobs:   {id, blob}            ← PDF 원본 (목록 볼 때는 안 읽음)
+// marks:   {id(fileId), items, autoDone}
+let dbp = null;
+function openDB() {
+  if (dbp) return dbp;
+  dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('wox', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      for (const s of ['folders', 'files', 'blobs', 'marks']) d.createObjectStore(s, { keyPath: 'id' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function tx(store, mode, fn) {
+  const d = await openDB();
+  return new Promise((res, rej) => {
+    const t = d.transaction(store, mode);
+    let out;
+    const r = fn(t.objectStore(store));
+    if (r) r.onsuccess = () => { out = r.result; };
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+const dbGet = (st, id) => tx(st, 'readonly', (s) => s.get(id));
+const dbAll = (st) => tx(st, 'readonly', (s) => s.getAll());
+const dbPut = (st, v) => tx(st, 'readwrite', (s) => s.put(v));
+const dbDel = (st, id) => tx(st, 'readwrite', (s) => s.delete(id));
+
+function requestPersist() {
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+}
+
+/* ---------------- 모달 · 토스트 ---------------- */
+let modalResolve = null;
+function showModal({ title = '', body = null, actions = [], list = false, onOpen = null }) {
+  closeModal(null);
+  return new Promise((resolve) => {
+    modalResolve = resolve;
+    $('#modal-title').textContent = title;
+    const b = $('#modal-body');
+    b.innerHTML = '';
+    if (typeof body === 'string') b.textContent = body;
+    else if (body) b.appendChild(body);
+    const a = $('#modal-actions');
+    a.innerHTML = '';
+    a.className = 'modal-actions' + (list ? ' list' : '');
+    for (const act of actions) {
+      const btn = document.createElement('button');
+      btn.className = 'btn ' + (act.cls || '');
+      btn.textContent = act.label;
+      btn.onclick = () => closeModal(typeof act.value === 'function' ? act.value() : act.value);
+      a.appendChild(btn);
+    }
+    $('#modal').hidden = false;
+    if (onOpen) onOpen();
+  });
+}
+function closeModal(v) {
+  if (!modalResolve) return;
+  const r = modalResolve;
+  modalResolve = null;
+  $('#modal').hidden = true;
+  r(v);
+}
+$('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(null); });
+
+const sheet = (title, items) =>
+  showModal({ title, list: true, actions: [...items, { label: '취소', value: null, cls: 'ghost' }] });
+const confirmBox = (title, msg, okLabel = '확인', danger = false) =>
+  showModal({
+    title, body: msg,
+    actions: [{ label: '취소', value: false, cls: 'ghost' }, { label: okLabel, value: true, cls: danger ? 'danger' : 'primary' }],
+  });
+function promptBox(title, init = '', { multiline = false, placeholder = '' } = {}) {
+  const el = document.createElement(multiline ? 'textarea' : 'input');
+  if (!multiline) el.type = 'text';
+  el.value = init;
+  el.placeholder = placeholder;
+  return showModal({
+    title, body: el,
+    actions: [{ label: '취소', value: null, cls: 'ghost' }, { label: '저장', value: () => el.value, cls: 'primary' }],
+    onOpen: () => setTimeout(() => el.focus(), 60),
+  });
+}
+
+let toastT = null;
+function toast(msg, ms = 2400) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastT);
+  toastT = setTimeout(() => { t.hidden = true; }, ms);
+}
+
+function showScreen(name) {
+  $('#library').hidden = name !== 'library';
+  $('#viewer').hidden = name !== 'viewer';
+}
+
+/* =========================================================
+   파일 목록 (라이브러리)
+   ========================================================= */
+const lib = { folders: [], files: [], tab: localStorage.getItem('wox.tab') || 'all' };
+
+async function loadLibrary() {
+  lib.folders = (await dbAll('folders')).sort((a, b) => a.created - b.created);
+  lib.files = await dbAll('files');
+  if (lib.tab !== 'all' && lib.tab !== 'none' && !lib.folders.some((f) => f.id === lib.tab)) lib.tab = 'all';
+  renderLibrary();
+}
+
+function setTab(t) {
+  lib.tab = t;
+  try { localStorage.setItem('wox.tab', t); } catch (e) { /* 무시 */ }
+  renderLibrary();
+}
+
+const folderName = (id) => (lib.folders.find((f) => f.id === id) || {}).name || '미분류';
+const fmtDate = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; };
+const fmtSize = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB');
+
+function renderLibrary() {
+  const tabs = $('#folder-tabs');
+  tabs.innerHTML = '';
+  const mkTab = (label, key, count, extraCls = '') => {
+    const b = document.createElement('button');
+    b.className = 'tab ' + extraCls + (lib.tab === key ? ' on' : '');
+    b.textContent = label;
+    if (count !== undefined) {
+      const c = document.createElement('span');
+      c.className = 'cnt';
+      c.textContent = count;
+      b.appendChild(c);
+    }
+    tabs.appendChild(b);
+    return b;
+  };
+  mkTab('전체', 'all', lib.files.length).onclick = () => setTab('all');
+  for (const f of lib.folders) {
+    const b = mkTab(f.name, f.id, lib.files.filter((x) => x.folderId === f.id).length);
+    b.onclick = () => (lib.tab === f.id ? folderMenu(f) : setTab(f.id));
+    b.oncontextmenu = (e) => { e.preventDefault(); folderMenu(f); };
+  }
+  const noneCnt = lib.files.filter((x) => !x.folderId || !lib.folders.some((f) => f.id === x.folderId)).length;
+  if (lib.folders.length && noneCnt) mkTab('미분류', 'none', noneCnt).onclick = () => setTab('none');
+  mkTab('+ 과목', '__add', undefined, 'add').onclick = newFolder;
+
+  const list = $('#file-list');
+  list.innerHTML = '';
+  let files = lib.files;
+  if (lib.tab === 'none') files = files.filter((x) => !x.folderId || !lib.folders.some((f) => f.id === x.folderId));
+  else if (lib.tab !== 'all') files = files.filter((x) => x.folderId === lib.tab);
+  files = [...files].sort((a, b) => (b.opened || b.added) - (a.opened || a.added));
+
+  if (!files.length) {
+    const e = div('empty');
+    e.innerHTML = lib.files.length
+      ? '이 과목에는 아직 파일이 없어요.<br>오른쪽 위 <b>+ PDF</b>로 불러오세요.'
+      : '아직 불러온 PDF가 없어요.<br>오른쪽 위 <b>+ PDF</b>를 눌러<br>내 파일에서 PDF를 골라 주세요.';
+    list.appendChild(e);
+    return;
+  }
+  for (const f of files) {
+    const row = div('file-row');
+    const icon = div('file-icon');
+    icon.textContent = 'PDF';
+    const info = div('file-info');
+    const nm = div('file-name');
+    nm.textContent = f.name;
+    const meta = div('file-meta');
+    meta.textContent = `${folderName(f.folderId)} · ${f.pages}쪽 · ${fmtSize(f.size)} · ${f.opened ? '최근 ' + fmtDate(f.opened) : '추가 ' + fmtDate(f.added)}`;
+    info.append(nm, meta);
+    const more = document.createElement('button');
+    more.className = 'file-more';
+    more.textContent = '⋮';
+    more.onclick = (e) => { e.stopPropagation(); fileMenu(f); };
+    row.append(icon, info, more);
+    row.onclick = () => openFile(f.id);
+    row.oncontextmenu = (e) => { e.preventDefault(); fileMenu(f); };
+    list.appendChild(row);
+  }
+}
+
+/* ---- 과목(폴더) ---- */
+async function newFolder() {
+  const name = await promptBox('새 과목 이름', '', { placeholder: '예: 정보보호론' });
+  if (!name || !name.trim()) return null;
+  const f = { id: uid(), name: name.trim(), created: Date.now() };
+  await dbPut('folders', f);
+  lib.tab = f.id;
+  await loadLibrary();
+  return f;
+}
+
+async function folderMenu(f) {
+  const v = await sheet(f.name, [
+    { label: '이름 바꾸기', value: 'rename' },
+    { label: '과목 삭제 (파일은 미분류로)', value: 'del', cls: 'danger' },
+  ]);
+  if (v === 'rename') {
+    const name = await promptBox('과목 이름 바꾸기', f.name);
+    if (name && name.trim()) { f.name = name.trim(); await dbPut('folders', f); await loadLibrary(); }
+  } else if (v === 'del') {
+    if (!(await confirmBox('과목 삭제', `"${f.name}" 과목을 지울까요? 안에 있던 파일은 지워지지 않고 미분류로 옮겨져요.`, '삭제', true))) return;
+    for (const x of lib.files.filter((x) => x.folderId === f.id)) { x.folderId = null; await dbPut('files', x); }
+    await dbDel('folders', f.id);
+    lib.tab = 'all';
+    await loadLibrary();
+  }
+}
+
+async function pickFolder(title, currentId) {
+  const items = lib.folders.map((f) => ({ label: (f.id === currentId ? '✓ ' : '') + f.name, value: f.id }));
+  items.push({ label: (!currentId ? '✓ ' : '') + '미분류', value: '__none' });
+  items.push({ label: '+ 새 과목 만들기', value: '__new' });
+  const v = await sheet(title, items);
+  if (v === null) return undefined;
+  if (v === '__none') return null;
+  if (v === '__new') { const f = await newFolder(); return f ? f.id : undefined; }
+  return v;
+}
+
+/* ---- 파일 ---- */
+async function fileMenu(f) {
+  const v = await sheet(f.name, [
+    { label: '열기', value: 'open' },
+    { label: '이름 바꾸기', value: 'rename' },
+    { label: '과목 이동', value: 'move' },
+    { label: '삭제', value: 'del', cls: 'danger' },
+  ]);
+  if (v === 'open') openFile(f.id);
+  else if (v === 'rename') {
+    const name = await promptBox('파일 이름 바꾸기', f.name);
+    if (name && name.trim()) { f.name = name.trim(); await dbPut('files', f); await loadLibrary(); }
+  } else if (v === 'move') {
+    const to = await pickFolder('어느 과목으로 옮길까요?', f.folderId);
+    if (to === undefined) return;
+    f.folderId = to;
+    await dbPut('files', f);
+    await loadLibrary();
+    toast(`${folderName(to)}(으)로 옮겼어요`);
+  } else if (v === 'del') {
+    if (!(await confirmBox('파일 삭제', `"${f.name}"을(를) 지울까요? 체크·주석·빈칸도 함께 지워지고 되돌릴 수 없어요.`, '삭제', true))) return;
+    await dbDel('files', f.id);
+    await dbDel('blobs', f.id);
+    await dbDel('marks', f.id);
+    await loadLibrary();
+    toast('삭제했어요');
+  }
+}
+
+$('#btn-import').onclick = () => $('#file-input').click();
+$('#file-input').onchange = async (e) => {
+  const picked = [...e.target.files];
+  e.target.value = '';
+  if (!picked.length) return;
+  let folderId = lib.tab !== 'all' && lib.tab !== 'none' ? lib.tab : null;
+  if (lib.tab === 'all' && lib.folders.length) {
+    const to = await pickFolder('어느 과목에 넣을까요?', null);
+    if (to === undefined) return;
+    folderId = to;
+  }
+  toast('불러오는 중…', 60000);
+  let ok = 0;
+  for (const f of picked) {
+    try {
+      const buf = await f.arrayBuffer();
+      const doc = await pdfjsLib.getDocument({ data: buf.slice(0), ...PDF_OPTS }).promise;
+      const pages = doc.numPages;
+      doc.destroy();
+      const id = uid();
+      await dbPut('blobs', { id, blob: new Blob([buf], { type: 'application/pdf' }) });
+      await dbPut('files', {
+        id, name: f.name.replace(/\.pdf$/i, ''), folderId, size: f.size, pages, added: Date.now(), opened: 0,
+      });
+      ok++;
+    } catch (err) {
+      console.error(err);
+      toast(`"${f.name}"은(는) 열 수 없는 PDF예요`);
+    }
+  }
+  requestPersist();
+  if (folderId) lib.tab = folderId;
+  await loadLibrary();
+  if (ok) toast(`${ok}개 불러왔어요`);
+};
+
+/* ---- 라이브러리 메뉴 (백업 등) ---- */
+$('#btn-lib-menu').onclick = async () => {
+  const v = await sheet('메뉴', [
+    { label: '새 과목 만들기', value: 'folder' },
+    { label: '전체 백업 (PDF 포함)', value: 'full' },
+    { label: '표시만 백업 (체크·주석·빈칸, 가벼움)', value: 'marks' },
+    { label: '백업 파일에서 복원', value: 'restore' },
+    { label: '저장공간 확인', value: 'storage' },
+    { label: '사용법', value: 'help' },
+  ]);
+  if (v === 'folder') newFolder();
+  else if (v === 'full') exportBackup(true);
+  else if (v === 'marks') exportBackup(false);
+  else if (v === 'restore') $('#backup-input').click();
+  else if (v === 'storage') showStorage();
+  else if (v === 'help') showHelp();
+};
+
+function blobToB64(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1]);
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+function b64ToBlob(b64, type = 'application/pdf') {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type });
+}
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+const ymd = () => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; };
+
+async function exportBackup(withPdf) {
+  toast('백업 파일 만드는 중…', 60000);
+  const folders = await dbAll('folders');
+  const files = await dbAll('files');
+  const marks = await dbAll('marks');
+  const parts = [JSON.stringify({ app: 'wox', v: 1, kind: withPdf ? 'full' : 'marks', exported: Date.now(), folders, files, marks }).slice(0, -1)];
+  parts.push(',"blobs":[');
+  if (withPdf) {
+    const blobs = await dbAll('blobs');
+    for (let i = 0; i < blobs.length; i++) {
+      parts.push((i ? ',' : '') + JSON.stringify({ id: blobs[i].id, data: await blobToB64(blobs[i].blob) }));
+    }
+  }
+  parts.push(']}');
+  download(new Blob(parts, { type: 'application/json' }), `wox-${withPdf ? '전체' : '표시'}백업-${ymd()}.json`);
+  toast('백업 파일을 다운로드 폴더에 저장했어요', 3500);
+}
+
+$('#backup-input').onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch (err) { toast('백업 파일을 읽을 수 없어요'); return; }
+  if (!data || data.app !== 'wox') { toast('WOX 백업 파일이 아니에요'); return; }
+  if (!(await confirmBox('백업 복원', '지금 있는 데이터에 합칠게요. 같은 파일의 표시는 백업 내용으로 덮어써요.', '복원'))) return;
+  toast('복원하는 중…', 60000);
+  const localFiles = await dbAll('files');
+  const blobIds = new Set((data.blobs || []).map((b) => b.id));
+  for (const b of data.blobs || []) await dbPut('blobs', { id: b.id, blob: b64ToBlob(b.data) });
+  for (const fo of data.folders || []) await dbPut('folders', fo);
+  let restored = 0;
+  for (const fm of data.files || []) {
+    const hasHere = localFiles.find((x) => x.id === fm.id);
+    const mk = (data.marks || []).find((m) => m.id === fm.id);
+    if (blobIds.has(fm.id) || hasHere) {
+      await dbPut('files', hasHere && !blobIds.has(fm.id) ? { ...hasHere, folderId: fm.folderId } : fm);
+      if (mk) await dbPut('marks', mk);
+      restored++;
+    } else if (mk) {
+      // PDF가 없는 "표시만 백업": 같은 이름의 파일을 찾아서 표시를 입힌다
+      const same = localFiles.find((x) => x.name === fm.name);
+      if (same) { await dbPut('marks', { ...mk, id: same.id }); restored++; }
+    }
+  }
+  requestPersist();
+  await loadLibrary();
+  toast(`${restored}개 파일을 복원했어요`, 3000);
+};
+
+async function showStorage() {
+  let msg = '확인할 수 없어요';
+  if (navigator.storage && navigator.storage.estimate) {
+    const est = await navigator.storage.estimate();
+    const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false;
+    msg = `사용 중: ${fmtSize(est.usage || 0)}\n사용 가능: 약 ${fmtSize(est.quota || 0)}\n\n` +
+      (persisted ? '✓ 보호됨: 폰 용량이 부족해도 자동으로 지워지지 않아요.'
+        : '보호 안 됨: 앱을 홈 화면에 설치하고 자주 쓰면 보통 보호돼요. 그래도 가끔 백업해 두세요.');
+  }
+  const body = div('');
+  body.style.whiteSpace = 'pre-wrap';
+  body.textContent = msg;
+  showModal({ title: '저장공간', body, actions: [{ label: '닫기', value: null, cls: 'primary' }] });
+}
+
+function showHelp() {
+  const body = div('');
+  body.style.whiteSpace = 'pre-wrap';
+  body.textContent = [
+    '■ 파일',
+    '· + PDF: 내 파일에서 PDF를 골라 불러와요 (여러 개 가능)',
+    '· 파일 오른쪽 ⋮ 또는 꾹 누르기: 이름 바꾸기 · 과목 이동 · 삭제',
+    '· 과목 탭을 한 번 더 누르거나 꾹 누르기: 과목 이름 바꾸기 · 삭제',
+    '',
+    '■ 체크칸',
+    '· 문제 번호 옆에 체크칸이 자동으로 생겨요',
+    '· 탭할 때마다 빈칸 → V → W → 빈칸',
+    '· 위의 ☐ 버튼: 배치 모드 (탭하면 추가, 끌면 이동, 꾹 누르면 삭제)',
+    '',
+    '■ 주석 · 빈칸',
+    '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
+    '· 아래 [주석] 또는 [빈칸]을 누르세요',
+    '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
+    '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
+    '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
+    '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
+    '',
+    '■ 기타',
+    '· 두 손가락으로 벌리면 확대, 오므리면 축소',
+    '· ↶ 되돌리기',
+    '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
+  ].join('\n');
+  showModal({ title: '사용법', body, actions: [{ label: '닫기', value: null, cls: 'primary' }] });
+}
+
+/* =========================================================
+   뷰어
+   ========================================================= */
+const BOX = 0.03; // 체크칸 한 변 = 페이지 너비의 3%
+const MIN_Z = 0.5, MAX_Z = 5;
+const scroller = $('#scroller');
+const pagesEl = $('#pages');
+
+const V = {
+  file: null, doc: null, pages: [], token: 0,
+  zoom: 1, scale: 1, items: [], autoDone: false,
+  checkMode: false, undo: [], runtime: new Map(),
+  sel: null, selEl: null, io: null,
+};
+
+async function openFile(id) {
+  const token = ++V.token;
+  const meta = await dbGet('files', id);
+  const b = await dbGet('blobs', id);
+  if (!meta || !b) { toast('파일을 찾을 수 없어요'); return; }
+  showScreen('viewer');
+  history.pushState({ wox: 'viewer' }, '');
+  V.file = meta;
+  $('#doc-title').textContent = meta.name;
+  $('#page-ind').textContent = '여는 중…';
+  pagesEl.innerHTML = '';
+  const m = (await dbGet('marks', id)) || { id, items: [], autoDone: false };
+  V.items = m.items;
+  V.autoDone = m.autoDone;
+  V.undo = [];
+  V.runtime.clear();
+  clearSel();
+  setCheckMode(false);
+  try {
+    V.doc = await pdfjsLib.getDocument({ data: await b.blob.arrayBuffer(), ...PDF_OPTS }).promise;
+  } catch (err) {
+    console.error(err);
+    toast('PDF를 열 수 없어요');
+    history.back();
+    return;
+  }
+  if (token !== V.token) return;
+  V.pages = [];
+  for (let i = 1; i <= V.doc.numPages; i++) {
+    const p = await V.doc.getPage(i);
+    if (token !== V.token) return;
+    const vp = p.getViewport({ scale: 1 });
+    V.pages.push({ num: i, pdfPage: p, w: vp.width, h: vp.height });
+  }
+  V.zoom = meta.zoom || 1;
+  buildPages();
+  renderAllMarks();
+  requestAnimationFrame(() => {
+    scroller.scrollTop = (meta.scrollRatio || 0) * scroller.scrollHeight;
+    updatePageInd();
+  });
+  meta.opened = Date.now();
+  dbPut('files', meta);
+  if (!V.autoDone) autoPlaceChecks(token);
+}
+
+function fitWidth() { return Math.min(scroller.clientWidth - 16, 900); }
+
+function buildPages() {
+  pagesEl.innerHTML = '';
+  if (V.io) V.io.disconnect();
+  V.io = new IntersectionObserver(onPageVisibility, { root: scroller, rootMargin: '120% 0px' });
+  for (const pg of V.pages) {
+    const el = div('page');
+    el.dataset.page = pg.num;
+    const cv = document.createElement('canvas');
+    const layer = div('layer');
+    const num = div('page-num');
+    num.textContent = pg.num;
+    el.append(cv, layer, num);
+    pagesEl.appendChild(el);
+    Object.assign(pg, { el, canvas: cv, layer, rendered: null, visible: false, task: null });
+    V.io.observe(el);
+  }
+  layoutPages();
+}
+
+function layoutPages() {
+  const maxW = Math.max(...V.pages.map((p) => p.w));
+  V.scale = (fitWidth() * V.zoom) / maxW;
+  for (const pg of V.pages) {
+    pg.el.style.width = pg.w * V.scale + 'px';
+    pg.el.style.height = pg.h * V.scale + 'px';
+    if (pg.visible) renderPage(pg);
+  }
+}
+
+function onPageVisibility(entries) {
+  for (const e of entries) {
+    const pg = V.pages[+e.target.dataset.page - 1];
+    if (!pg) continue;
+    pg.visible = e.isIntersecting;
+    if (pg.visible) renderPage(pg);
+    else freePage(pg);
+  }
+}
+
+function freePage(pg) {
+  if (pg.task) { pg.task.cancel(); pg.task = null; }
+  pg.canvas.width = 0;
+  pg.canvas.height = 0;
+  pg.rendered = null;
+}
+
+async function renderPage(pg) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  let px = V.scale * dpr;
+  const maxPx = 12e6;
+  if (pg.w * pg.h * px * px > maxPx) px = Math.sqrt(maxPx / (pg.w * pg.h));
+  const key = px.toFixed(3);
+  if (pg.rendered === key) return;
+  if (pg.task) pg.task.cancel();
+  const vp = pg.pdfPage.getViewport({ scale: px });
+  const cv = document.createElement('canvas');
+  cv.width = Math.floor(vp.width);
+  cv.height = Math.floor(vp.height);
+  const task = pg.pdfPage.render({ canvasContext: cv.getContext('2d'), viewport: vp });
+  pg.task = task;
+  try { await task.promise; } catch (err) { return; }
+  if (pg.task !== task) return;
+  pg.task = null;
+  pg.canvas.replaceWith(cv);
+  pg.canvas = cv;
+  pg.rendered = key;
+}
+
+function updatePageInd() {
+  if (!V.pages.length) return;
+  const mid = scroller.scrollTop + scroller.clientHeight / 3;
+  let cur = 1;
+  for (const pg of V.pages) if (pg.el.offsetTop <= mid) cur = pg.num;
+  $('#page-ind').textContent = `${cur} / ${V.pages.length}쪽 · ${Math.round(V.zoom * 100)}%`;
+}
+let scrollRaf = 0;
+scroller.addEventListener('scroll', () => {
+  if (scrollRaf) return;
+  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updatePageInd(); });
+});
+
+function applyZoom(z, anchor) {
+  z = clamp(z, MIN_Z, MAX_Z);
+  const f = z / V.zoom;
+  V.zoom = z;
+  layoutPages();
+  if (anchor) {
+    scroller.scrollLeft = anchor.cx * f - anchor.mx;
+    scroller.scrollTop = anchor.cy * f - anchor.my;
+  }
+  updatePageInd();
+  saveViewState();
+}
+
+let resizeT = 0;
+window.addEventListener('resize', () => {
+  if (!V.file) return;
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => {
+    const ratio = scroller.scrollTop / Math.max(1, scroller.scrollHeight);
+    layoutPages();
+    scroller.scrollTop = ratio * scroller.scrollHeight;
+  }, 150);
+});
+
+function saveViewState() {
+  if (!V.file) return;
+  V.file.zoom = V.zoom;
+  V.file.scrollRatio = scroller.scrollTop / Math.max(1, scroller.scrollHeight);
+  dbPut('files', V.file);
+}
+
+async function closeViewer() {
+  if (!V.file) { showScreen('library'); return; }
+  saveViewState();
+  await flushMarks();
+  V.token++;
+  if (V.io) V.io.disconnect();
+  for (const pg of V.pages) if (pg.task) pg.task.cancel();
+  if (V.doc) V.doc.destroy();
+  V.doc = null;
+  V.pages = [];
+  V.file = null;
+  pagesEl.innerHTML = '';
+  clearSel();
+  showScreen('library');
+  loadLibrary();
+}
+
+$('#btn-back').onclick = () => history.back();
+window.addEventListener('popstate', () => {
+  if (modalResolve) {
+    closeModal(null);
+    if (V.file) history.pushState({ wox: 'viewer' }, '');
+    return;
+  }
+  if (V.file) closeViewer();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && V.file) { saveViewState(); flushMarks(); }
+});
+
+/* ---------------- 표시(마크) 데이터 ---------------- */
+// check: {id,type:'check',page,x,y,state(0/1/2),auto?}
+// note : {id,type:'note',page,x,y,w,h,text}
+// blank: {id,type:'blank',page,x,y,w,h}
+// 좌표는 모두 페이지 기준 0~1 비율 → 확대해도 그대로
+
+let saveT = 0;
+function saveMarks() { clearTimeout(saveT); saveT = setTimeout(flushMarks, 250); }
+function flushMarks() {
+  clearTimeout(saveT);
+  if (!V.file) return Promise.resolve();
+  return dbPut('marks', { id: V.file.id, items: V.items, autoDone: V.autoDone });
+}
+function snapshot() {
+  V.undo.push(JSON.stringify(V.items));
+  if (V.undo.length > 80) V.undo.shift();
+}
+$('#btn-undo').onclick = () => {
+  if (!V.undo.length) { toast('되돌릴 게 없어요'); return; }
+  V.items = JSON.parse(V.undo.pop());
+  renderAllMarks();
+  saveMarks();
+};
+
+const byId = (id) => V.items.find((x) => x.id === id);
+function rt(id) {
+  if (!V.runtime.has(id)) V.runtime.set(id, { revealed: false, open: false, justClosed: false });
+  return V.runtime.get(id);
+}
+function overlapRatio(a, b) { // a 면적 중 b와 겹치는 비율
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (w <= 0 || h <= 0) return 0;
+  return (w * h) / Math.max(1e-9, a.w * a.h);
+}
+const blanksOver = (note) =>
+  V.items.filter((b) => b.type === 'blank' && b.page === note.page && overlapRatio(note, b) >= 0.5);
+const notesUnder = (blank) =>
+  V.items.filter((n) => n.type === 'note' && n.page === blank.page && overlapRatio(n, blank) >= 0.5);
+
+function renderAllMarks() { for (const pg of V.pages) renderMarks(pg.num); }
+
+function renderMarks(pnum) {
+  const pg = V.pages[pnum - 1];
+  if (!pg || !pg.layer) return;
+  const L = pg.layer;
+  L.innerHTML = '';
+  const pops = [];
+  for (const it of V.items) {
+    if (it.page !== pnum) continue;
+    if (it.type === 'check') {
+      const d = div('chk s' + it.state);
+      d.style.left = it.x * 100 + '%';
+      d.style.top = it.y * 100 + '%';
+      d.textContent = ['', 'V', 'W'][it.state];
+      d.dataset.id = it.id;
+      L.appendChild(d);
+      continue;
+    }
+    const d = div(it.type);
+    d.dataset.id = it.id;
+    d.style.left = it.x * 100 + '%';
+    d.style.top = it.y * 100 + '%';
+    d.style.width = it.w * 100 + '%';
+    d.style.height = it.h * 100 + '%';
+    const r = rt(it.id);
+    if (it.type === 'blank') d.classList.add(r.revealed ? 'revealed' : 'covered');
+    if (it.type === 'note' && r.open) { d.classList.add('open'); pops.push(it); }
+    L.appendChild(d);
+  }
+  for (const n of pops) {
+    const p = div('note-pop');
+    p.textContent = n.text;
+    if (n.x > 0.55) p.style.right = (1 - n.x - n.w) * 100 + '%';
+    else p.style.left = n.x * 100 + '%';
+    if (n.y + n.h > 0.8) p.style.bottom = `calc(${(1 - n.y) * 100}% + 4px)`;
+    else p.style.top = `calc(${(n.y + n.h) * 100}% + 4px)`;
+    L.appendChild(p);
+  }
+  if (V.sel && V.sel.page === pnum) {
+    V.selEl = div('sel');
+    placeSel();
+    L.appendChild(V.selEl);
+  }
+}
+
+function placeSel() {
+  const s = V.sel;
+  Object.assign(V.selEl.style, {
+    left: s.x * 100 + '%', top: s.y * 100 + '%', width: s.w * 100 + '%', height: s.h * 100 + '%',
+  });
+}
+
+function addItem(it) {
+  snapshot();
+  V.items.push(it);
+  renderMarks(it.page);
+  saveMarks();
+}
+function removeItem(id) {
+  const it = byId(id);
+  if (!it) return;
+  snapshot();
+  V.items = V.items.filter((x) => x.id !== id);
+  V.runtime.delete(id);
+  renderMarks(it.page);
+  saveMarks();
+}
+
+/* ---- 탭 동작 ---- */
+function cycleCheck(it) {
+  snapshot();
+  it.state = (it.state + 1) % 3;
+  renderMarks(it.page);
+  saveMarks();
+}
+
+function tapBlank(b) {
+  const r = rt(b.id);
+  if (!r.revealed) {
+    r.revealed = true;
+  } else {
+    r.revealed = false;
+    for (const n of notesUnder(b)) Object.assign(rt(n.id), { open: false, justClosed: false });
+  }
+  renderMarks(b.page);
+}
+
+// 겹친 경우: 빈칸 → (탭) 글자+주석표시 → (탭) 주석 열림 → (탭) 닫힘 → (탭) 다시 빈칸
+function tapNote(n) {
+  const r = rt(n.id);
+  const parent = blanksOver(n).find((b) => rt(b.id).revealed);
+  if (r.open) {
+    r.open = false;
+    r.justClosed = !!parent;
+  } else if (r.justClosed && parent) {
+    r.justClosed = false;
+    rt(parent.id).revealed = false;
+  } else {
+    r.open = true;
+    r.justClosed = false;
+  }
+  renderMarks(n.page);
+}
+
+function closeAllNotes() {
+  let changed = false;
+  for (const it of V.items) {
+    if (it.type !== 'note') continue;
+    const r = rt(it.id);
+    if (r.open) { r.open = false; changed = true; }
+  }
+  if (changed) renderAllMarks();
+}
+
+function handleTap(target, x, y) {
+  if (V.sel) { clearSel(); return; }
+  const markEl = target.closest('[data-id]');
+  const pageEl = target.closest('.page');
+  if (V.checkMode) {
+    if (markEl && markEl.classList.contains('chk')) cycleCheck(byId(markEl.dataset.id));
+    else if (pageEl) addCheckAt(pageEl, x, y);
+    return;
+  }
+  if (!markEl) { closeAllNotes(); return; }
+  const it = byId(markEl.dataset.id);
+  if (!it) return;
+  if (it.type === 'check') cycleCheck(it);
+  else if (it.type === 'blank') tapBlank(it);
+  else if (it.type === 'note') tapNote(it);
+}
+
+async function handleLongPress(target) {
+  const markEl = target.closest('[data-id]');
+  if (!markEl) return;
+  const it = byId(markEl.dataset.id);
+  if (!it) return;
+  if (it.type === 'check') {
+    if (V.checkMode) { removeItem(it.id); toast('체크칸을 지웠어요'); return; }
+    const v = await sheet('체크칸', [
+      { label: '표시 지우기 (빈 네모로)', value: 'reset' },
+      { label: '체크칸 삭제', value: 'del', cls: 'danger' },
+    ]);
+    if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
+    else if (v === 'del') removeItem(it.id);
+  } else if (it.type === 'note') {
+    const v = await sheet('주석', [
+      { label: '주석 수정', value: 'edit' },
+      { label: '주석 삭제', value: 'del', cls: 'danger' },
+    ]);
+    if (v === 'edit') {
+      const text = await promptBox('주석 수정', it.text, { multiline: true });
+      if (text !== null && text.trim()) { snapshot(); it.text = text.trim(); renderMarks(it.page); saveMarks(); }
+    } else if (v === 'del') removeItem(it.id);
+  } else if (it.type === 'blank') {
+    const v = await sheet('빈칸', [
+      { label: '이 빈칸에 주석 달기', value: 'note' },
+      { label: '빈칸 삭제', value: 'del', cls: 'danger' },
+    ]);
+    if (v === 'note') {
+      const text = await promptBox('주석 달기', '', { multiline: true });
+      if (text && text.trim()) addItem({ id: uid(), type: 'note', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h, text: text.trim() });
+    } else if (v === 'del') removeItem(it.id);
+  }
+}
+
+function addCheckAt(pageEl, x, y) {
+  const r = pageEl.getBoundingClientRect();
+  addItem({
+    id: uid(), type: 'check', page: +pageEl.dataset.page,
+    x: clamp((x - r.left) / r.width, 0, 1), y: clamp((y - r.top) / r.height, 0, 1), state: 0,
+  });
+}
+
+/* ---- 선택 영역 → 주석 / 빈칸 ---- */
+function clearSel() {
+  const had = V.sel;
+  V.sel = null;
+  if (V.selEl) { V.selEl.remove(); V.selEl = null; }
+  $('#sel-bar').hidden = true;
+  return had;
+}
+$('#btn-sel-cancel').onclick = () => clearSel();
+$('#btn-sel-blank').onclick = () => {
+  const s = clearSel();
+  if (s) addItem({ id: uid(), type: 'blank', ...s });
+};
+$('#btn-sel-note').onclick = async () => {
+  const s = V.sel;
+  if (!s) return;
+  const text = await promptBox('주석 달기', '', { multiline: true, placeholder: '예: SHA-3의 기반이 된 알고리즘' });
+  clearSel();
+  if (text && text.trim()) addItem({ id: uid(), type: 'note', ...s, text: text.trim() });
+};
+
+/* ---- 체크칸 배치 모드 ---- */
+function setCheckMode(on) {
+  V.checkMode = on;
+  $('#btn-check-mode').classList.toggle('on', on);
+  $('#mode-hint').hidden = !on;
+  pagesEl.classList.toggle('checkmode', on);
+}
+$('#btn-check-mode').onclick = () => { clearSel(); setCheckMode(!V.checkMode); };
+
+/* ---- 문제 번호 / 선지 번호 옆 체크칸 자동 배치 ---- */
+async function autoPlaceChecks(token) {
+  const found = [];
+  let expected = 1, qCount = 0, cCount = 0;
+  for (const pg of V.pages) {
+    let tc;
+    try { tc = await pg.pdfPage.getTextContent(); } catch (err) { continue; }
+    if (token !== V.token) return;
+    const vp = pg.pdfPage.getViewport({ scale: 1 });
+    const place = (item, frac) => {
+      const [, , c, d, e, f] = item.transform;
+      const fontH = Math.hypot(c, d) || 10;
+      const [vx, vy] = vp.convertToViewportPoint(e + (item.width || 0) * frac, f);
+      const x = clamp((vx - BOX * vp.width * 1.05) / vp.width, BOX / 2, 1 - BOX / 2);
+      const y = clamp((vy - fontH * 0.35) / vp.height, 0, 1);
+      const near = V.items.concat(found).some((o) => o.type === 'check' && o.page === pg.num && Math.hypot(o.x - x, o.y - y) < 0.012);
+      if (near) return false;
+      found.push({ id: uid(), type: 'check', auto: true, page: pg.num, x, y, state: 0 });
+      return true;
+    };
+    for (const item of tc.items) {
+      const s = item.str;
+      if (!s) continue;
+      const m = s.match(/^\s*(\d{1,2})\s*\.(?!\d)/);
+      if (m) {
+        const n = +m[1];
+        if (n >= expected && n <= expected + 2) {
+          expected = n + 1;
+          if (place(item, 0)) qCount++;
+        }
+      }
+      for (let i = 0; i < s.length; i++) {
+        const code = s.charCodeAt(i);
+        if (code >= 0x2460 && code <= 0x2464 && place(item, i / s.length)) cCount++;
+      }
+    }
+  }
+  if (token !== V.token) return;
+  V.autoDone = true;
+  if (found.length) {
+    V.items.push(...found);
+    renderAllMarks();
+    toast(`문제 번호 ${qCount}개${cCount ? `, 선지 ${cCount}개` : ''}에 체크칸을 넣었어요`, 3000);
+  } else {
+    toast('문제 번호를 자동으로 못 찾았어요. 위의 ☐ 버튼으로 직접 넣을 수 있어요', 3500);
+  }
+  saveMarks();
+}
+
+/* ---- 뷰어 메뉴 ---- */
+$('#btn-view-menu').onclick = async () => {
+  const v = await sheet('메뉴', [
+    { label: '빈칸 모두 다시 가리기', value: 'cover' },
+    { label: '빈칸 모두 보기', value: 'reveal' },
+    { label: 'V/W 표시 모두 지우기 (다시 풀기)', value: 'resetchk' },
+    { label: '체크칸 자동 배치 다시 하기', value: 'reauto' },
+    { label: '체크칸 모두 삭제', value: 'delchk', cls: 'danger' },
+    { label: '화면 너비에 맞추기', value: 'fit' },
+  ]);
+  if (v === 'cover' || v === 'reveal') {
+    for (const it of V.items) {
+      if (it.type === 'blank') rt(it.id).revealed = v === 'reveal';
+      if (it.type === 'note') Object.assign(rt(it.id), { open: false, justClosed: false });
+    }
+    renderAllMarks();
+  } else if (v === 'resetchk') {
+    if (!(await confirmBox('V/W 지우기', '이 파일의 V/W 표시를 모두 빈 네모로 돌릴까요?', '지우기'))) return;
+    snapshot();
+    for (const it of V.items) if (it.type === 'check') it.state = 0;
+    renderAllMarks();
+    saveMarks();
+  } else if (v === 'reauto') {
+    snapshot();
+    V.items = V.items.filter((it) => !(it.type === 'check' && it.auto));
+    renderAllMarks();
+    autoPlaceChecks(V.token);
+  } else if (v === 'delchk') {
+    if (!(await confirmBox('체크칸 삭제', '이 파일의 체크칸을 모두 지울까요? (↶로 되돌릴 수 있어요)', '삭제', true))) return;
+    snapshot();
+    V.items = V.items.filter((it) => it.type !== 'check');
+    renderAllMarks();
+    saveMarks();
+  } else if (v === 'fit') {
+    applyZoom(1);
+  }
+};
+
+/* =========================================================
+   터치 제스처
+   - 짧게 탭: 표시 조작 / (배치 모드) 체크칸 추가
+   - 꾹 누른 뒤 끌기: 영역 선택
+   - 꾹 누르고 그대로 떼기: 표시 메뉴
+   - (배치 모드) 체크칸 끌기: 이동
+   - 두 손가락: 확대/축소
+   ========================================================= */
+const LONG_MS = 380, MOVE_TOL = 10;
+const G = { mode: null, timer: 0 };
+
+function gBegin(x, y, target) {
+  clearTimeout(G.timer);
+  Object.assign(G, {
+    mode: 'pending', sx: x, sy: y, target,
+    pageEl: target.closest('.page'),
+    chkEl: V.checkMode ? target.closest('.chk') : null,
+  });
+  G.timer = setTimeout(() => {
+    if (G.mode !== 'pending') return;
+    G.mode = 'held';
+    if (navigator.vibrate) navigator.vibrate(12);
+  }, LONG_MS);
+}
+
+// true를 돌려주면 브라우저 기본 스크롤을 막는다
+function gMove(x, y) {
+  const dist = Math.hypot(x - G.sx, y - G.sy);
+  if (G.mode === 'pending') {
+    if (G.chkEl) {
+      if (dist > 4) {
+        clearTimeout(G.timer);
+        G.mode = 'dragchk';
+        G.chkItem = byId(G.chkEl.dataset.id);
+        snapshot();
+        G.chkEl.classList.add('dragging');
+      }
+      return true;
+    }
+    if (dist > MOVE_TOL) { clearTimeout(G.timer); G.mode = 'scroll'; }
+    return false;
+  }
+  if (G.mode === 'held') {
+    if (dist > MOVE_TOL && G.pageEl && !V.checkMode) {
+      clearSel();
+      const r = G.pageEl.getBoundingClientRect();
+      G.nx0 = clamp((G.sx - r.left) / r.width, 0, 1);
+      G.ny0 = clamp((G.sy - r.top) / r.height, 0, 1);
+      G.mode = 'select';
+      V.sel = { page: +G.pageEl.dataset.page, x: G.nx0, y: G.ny0, w: 0, h: 0 };
+      // 레이어를 다시 그리면 손가락이 닿은 요소가 사라져 터치가 끊기므로 선택 상자만 붙인다
+      V.selEl = div('sel');
+      placeSel();
+      V.pages[V.sel.page - 1].layer.appendChild(V.selEl);
+    }
+    return true;
+  }
+  if (G.mode === 'select') {
+    const sr = scroller.getBoundingClientRect();
+    if (y < sr.top + 40) scroller.scrollTop -= 10;
+    else if (y > sr.bottom - 40) scroller.scrollTop += 10;
+    const r = G.pageEl.getBoundingClientRect();
+    const nx = clamp((x - r.left) / r.width, 0, 1);
+    const ny = clamp((y - r.top) / r.height, 0, 1);
+    Object.assign(V.sel, {
+      x: Math.min(G.nx0, nx), y: Math.min(G.ny0, ny), w: Math.abs(nx - G.nx0), h: Math.abs(ny - G.ny0),
+    });
+    placeSel();
+    return true;
+  }
+  if (G.mode === 'dragchk') {
+    const r = G.pageEl.getBoundingClientRect();
+    G.chkItem.x = clamp((x - r.left) / r.width, 0, 1);
+    G.chkItem.y = clamp((y - r.top) / r.height, 0, 1);
+    G.chkEl.style.left = G.chkItem.x * 100 + '%';
+    G.chkEl.style.top = G.chkItem.y * 100 + '%';
+    return true;
+  }
+  return G.mode === 'pinch' || G.mode === 'ignore';
+}
+
+function gEnd() {
+  clearTimeout(G.timer);
+  const mode = G.mode;
+  G.mode = null;
+  if (mode === 'pending') handleTap(G.target, G.sx, G.sy);
+  else if (mode === 'held') handleLongPress(G.target);
+  else if (mode === 'select') {
+    const r = G.pageEl.getBoundingClientRect();
+    if (V.sel.w * r.width < 8 || V.sel.h * r.height < 5) clearSel();
+    else $('#sel-bar').hidden = false;
+  } else if (mode === 'dragchk') {
+    G.chkEl.classList.remove('dragging');
+    renderMarks(G.chkItem.page);
+    saveMarks();
+  }
+  return mode !== 'scroll' && mode !== null;
+}
+
+/* ---- 두 손가락 확대 ---- */
+function pinchStart(t) {
+  clearTimeout(G.timer);
+  if (G.mode === 'select') clearSel();
+  if (G.mode === 'dragchk') { G.chkEl.classList.remove('dragging'); renderMarks(G.chkItem.page); saveMarks(); }
+  const [a, b] = [t[0], t[1]];
+  const sr = scroller.getBoundingClientRect();
+  G.mode = 'pinch';
+  G.d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+  G.z0 = V.zoom;
+  G.ps = 1;
+  G.mx = (a.clientX + b.clientX) / 2 - sr.left;
+  G.my = (a.clientY + b.clientY) / 2 - sr.top;
+  G.cx = scroller.scrollLeft + G.mx;
+  G.cy = scroller.scrollTop + G.my;
+  pagesEl.style.transformOrigin = `${G.cx}px ${G.cy}px`;
+}
+function pinchMove(t) {
+  const d = Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  G.ps = clamp(G.z0 * (d / G.d0), MIN_Z, MAX_Z) / G.z0;
+  pagesEl.style.transform = `scale(${G.ps})`;
+}
+function pinchEnd() {
+  pagesEl.style.transform = '';
+  G.mode = 'ignore';
+  if (Math.abs(G.ps - 1) > 0.02) applyZoom(G.z0 * G.ps, { cx: G.cx, cy: G.cy, mx: G.mx, my: G.my });
+}
+
+let lastTouch = 0;
+scroller.addEventListener('touchstart', (e) => {
+  lastTouch = Date.now();
+  if (e.touches.length === 2) { pinchStart(e.touches); e.preventDefault(); return; }
+  if (e.touches.length > 2) return;
+  if (G.mode === 'ignore') return;
+  gBegin(e.touches[0].clientX, e.touches[0].clientY, e.target);
+}, { passive: false });
+
+scroller.addEventListener('touchmove', (e) => {
+  lastTouch = Date.now();
+  if (G.mode === 'pinch') {
+    if (e.touches.length >= 2) pinchMove(e.touches);
+    e.preventDefault();
+    return;
+  }
+  if (G.mode === 'ignore') { e.preventDefault(); return; }
+  const t = e.touches[0];
+  if (gMove(t.clientX, t.clientY) && e.cancelable) e.preventDefault();
+}, { passive: false });
+
+scroller.addEventListener('touchend', (e) => {
+  lastTouch = Date.now();
+  if (G.mode === 'pinch') { if (e.touches.length < 2) pinchEnd(); if (!e.touches.length) G.mode = null; e.preventDefault(); return; }
+  if (G.mode === 'ignore') { if (!e.touches.length) G.mode = null; e.preventDefault(); return; }
+  if (e.touches.length) return;
+  if (gEnd() && e.cancelable) e.preventDefault(); // 가짜 click/mouse 이벤트 막기
+});
+scroller.addEventListener('touchcancel', () => {
+  clearTimeout(G.timer);
+  if (G.mode === 'pinch') pinchEnd();
+  if (G.mode === 'select') clearSel();
+  G.mode = null;
+});
+scroller.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/* PC 마우스로도 테스트할 수 있게 */
+let mouseDown = false;
+scroller.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || Date.now() - lastTouch < 1000) return;
+  mouseDown = true;
+  gBegin(e.clientX, e.clientY, e.target);
+});
+window.addEventListener('mousemove', (e) => { if (mouseDown) gMove(e.clientX, e.clientY); });
+window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; gEnd(); } });
+scroller.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey || !V.file) return;
+  e.preventDefault();
+  const sr = scroller.getBoundingClientRect();
+  const mx = e.clientX - sr.left, my = e.clientY - sr.top;
+  applyZoom(V.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), { cx: scroller.scrollLeft + mx, cy: scroller.scrollTop + my, mx, my });
+}, { passive: false });
+
+/* =========================================================
+   시작
+   ========================================================= */
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+showScreen('library');
+loadLibrary();

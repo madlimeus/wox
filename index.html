@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#2b3a67">
+<title>WOX</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== 파일 목록 화면 ===== -->
+<section id="library" class="screen">
+  <header class="bar">
+    <h1>WOX</h1>
+    <div class="bar-actions">
+      <button id="btn-import" class="btn primary">+ PDF</button>
+      <button id="btn-lib-menu" class="icon-btn" aria-label="메뉴">⋮</button>
+    </div>
+  </header>
+  <nav id="folder-tabs" class="tabs"></nav>
+  <main id="file-list" class="file-list"></main>
+  <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+  <input id="backup-input" type="file" accept=".json,application/json" hidden>
+</section>
+
+<!-- ===== PDF 보기 화면 ===== -->
+<section id="viewer" class="screen" hidden>
+  <header class="bar">
+    <button id="btn-back" class="icon-btn" aria-label="뒤로">←</button>
+    <div class="title-wrap">
+      <div id="doc-title" class="doc-title"></div>
+      <div id="page-ind" class="page-ind"></div>
+    </div>
+    <div class="bar-actions">
+      <button id="btn-check-mode" class="icon-btn" aria-label="체크칸 배치">☐</button>
+      <button id="btn-undo" class="icon-btn" aria-label="되돌리기">↶</button>
+      <button id="btn-view-menu" class="icon-btn" aria-label="메뉴">⋮</button>
+    </div>
+  </header>
+  <div id="mode-hint" class="mode-hint" hidden>체크칸 배치 모드 · 탭하면 추가, 끌면 이동, 꾹 누르면 삭제</div>
+  <div id="scroller" class="scroller">
+    <div id="pages" class="pages"></div>
+  </div>
+  <div id="sel-bar" class="sel-bar" hidden>
+    <button id="btn-sel-note" class="btn">주석</button>
+    <button id="btn-sel-blank" class="btn primary">빈칸</button>
+    <button id="btn-sel-cancel" class="btn ghost">취소</button>
+  </div>
+</section>
+
+<!-- ===== 공용 모달 / 토스트 ===== -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-box" role="dialog">
+    <div id="modal-title" class="modal-title"></div>
+    <div id="modal-body" class="modal-body"></div>
+    <div id="modal-actions" class="modal-actions"></div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="lib/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

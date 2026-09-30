@@ -1,0 +1,16 @@
+{
+  "name": "WOX",
+  "short_name": "WOX",
+  "description": "PDF 기출에 V/W 체크, 주석, 빈칸을 다는 공부 앱",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f4f8",
+  "theme_color": "#2b3a67",
+  "lang": "ko",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
