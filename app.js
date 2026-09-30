@@ -918,8 +918,10 @@ function setCheckMode(on) {
 $('#btn-check-mode').onclick = () => { clearSel(); setCheckMode(!V.checkMode); };
 
 /* ---- 문제 번호 / 선지 번호 옆 체크칸 자동 배치 ---- */
-async function autoPlaceChecks(token) {
+// prev: 다시 배치할 때 지운 예전 자동 체크칸 → 근처에 새로 생긴 칸에 V/W를 옮겨 준다
+async function autoPlaceChecks(token, prev = []) {
   const found = [];
+  const used = new Set();
   let expected = 1, qCount = 0, cCount = 0;
   for (const pg of V.pages) {
     let tc;
@@ -930,11 +932,20 @@ async function autoPlaceChecks(token) {
       const [, , c, d, e, f] = item.transform;
       const fontH = Math.hypot(c, d) || 10;
       const [vx, vy] = vp.convertToViewportPoint(e + (item.width || 0) * frac, f);
-      const x = clamp((vx - BOX * vp.width * 1.05) / vp.width, BOX / 2, 1 - BOX / 2);
+      // 네모 오른쪽 끝과 번호 사이를 페이지 너비의 0.4%(약 3pt)만 띄운다
+      const x = clamp((vx - BOX * vp.width / 2 - 0.004 * vp.width) / vp.width, BOX / 2, 1 - BOX / 2);
       const y = clamp((vy - fontH * 0.35) / vp.height, 0, 1);
       const near = V.items.concat(found).some((o) => o.type === 'check' && o.page === pg.num && Math.hypot(o.x - x, o.y - y) < 0.012);
       if (near) return false;
-      found.push({ id: uid(), type: 'check', auto: true, page: pg.num, x, y, state: 0 });
+      let state = 0, best = 0.04;
+      let match = null;
+      for (const o of prev) {
+        if (o.page !== pg.num || used.has(o.id) || Math.abs(o.y - y) > 0.012) continue;
+        const dx = Math.abs(o.x - x);
+        if (dx < best) { best = dx; match = o; }
+      }
+      if (match) { used.add(match.id); state = match.state; }
+      found.push({ id: uid(), type: 'check', auto: true, page: pg.num, x, y, state });
       return true;
     };
     for (const item of tc.items) {
@@ -990,9 +1001,10 @@ $('#btn-view-menu').onclick = async () => {
     saveMarks();
   } else if (v === 'reauto') {
     snapshot();
+    const prev = V.items.filter((it) => it.type === 'check' && it.auto);
     V.items = V.items.filter((it) => !(it.type === 'check' && it.auto));
     renderAllMarks();
-    autoPlaceChecks(V.token);
+    autoPlaceChecks(V.token, prev);
   } else if (v === 'delchk') {
     if (!(await confirmBox('체크칸 삭제', '이 파일의 체크칸을 모두 지울까요? (↶로 되돌릴 수 있어요)', '삭제', true))) return;
     snapshot();
