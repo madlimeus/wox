@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v20';
+const BUILD = 'v21';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -813,8 +813,8 @@ function renderMarks(pnum) {
     const b = it.type === 'note' ? blanksOver(it)[0] : null;
     // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
     if (it.type === 'note' && !(b && !rt(b.id).revealed)) {
-      // 세모: 세로 = 겹친 빈칸의 세로(없으면 주석 영역 세로), 가로 = 세로와 같은 길이
-      const top = b ? b.y : it.y, h = b ? b.h : it.h;
+      // 세모: 세로 = 겹친 빈칸 세로(없으면 주석 영역 세로)의 절반, 가로 = 세로와 같은 길이
+      const top = b ? b.y : it.y, h = (b ? b.h : it.h) / 2;
       const tri = div('note-tri');
       tri.dataset.id = it.id;
       tri.style.left = it.x * 100 + '%';
