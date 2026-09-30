@@ -142,7 +142,7 @@ button { font: inherit; color: inherit; }
 .note::before {
   content: ""; position: absolute; left: 0; top: 0;
   border-style: solid; border-width: 1.4cqw 1.4cqw 0 0;
-  border-color: var(--note-mark) transparent transparent transparent;
+  border-color: rgba(255,138,0,.45) transparent transparent transparent; /* 반투명: 뒤 글씨가 보이게 */
 }
 .note.open { outline: 2px solid var(--note-mark); }
 
