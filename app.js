@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v19';
+const BUILD = 'v20';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -493,7 +493,7 @@ function showHelp() {
     '■ 체크칸',
     '· 문제 번호 옆에 체크칸이 자동으로 생겨요',
     '· 탭할 때마다 빈칸 → V → W → 빈칸',
-    '· 위의 ☐ 버튼: 배치 모드 (탭하면 추가, 끌면 이동, 꾹 누르면 삭제)',
+    '· 위의 ☐ 버튼 (PC는 S): 새 체크칸 → 끌어서 위치 잡고 [고정] (Enter) · 취소는 Esc',
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
@@ -515,7 +515,7 @@ function showHelp() {
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
-    '· A 100%↔200% · Ctrl+Z 되돌리기',
+    '· S 체크칸 추가 · A 100%↔200% · Ctrl+Z 되돌리기',
     '',
     '· ↶ 되돌리기',
     '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
@@ -963,11 +963,11 @@ async function handleLongPress(target) {
 }
 
 /* ---- 체크칸 하나 이동 (메뉴 → 끌기 → Enter 고정 / Esc 취소) ---- */
-function startMoveCheck(it) {
+function startMoveCheck(it, isNew = false) {
   clearSel();
   setCheckMode(false);
-  snapshot();
-  V.moving = { id: it.id, orig: { page: it.page, x: it.x, y: it.y } };
+  if (!isNew) snapshot(); // 새 칸은 addCheckAndMove에서 이미 저장
+  V.moving = { id: it.id, isNew, orig: { page: it.page, x: it.x, y: it.y } };
   $('#move-bar').hidden = false;
   scroller.classList.add('moving-chk');
   renderMarks(it.page);
@@ -1002,7 +1002,11 @@ function endMoveCheck(keep) {
   if (!V.moving) return;
   const it = byId(V.moving.id);
   const oldPage = it ? it.page : null;
-  if (!keep && it) { Object.assign(it, V.moving.orig); V.undo.pop(); }
+  if (!keep && it) {
+    if (V.moving.isNew) V.items = V.items.filter((x) => x.id !== it.id); // 새 칸 취소 = 안 만든 것으로
+    else Object.assign(it, V.moving.orig);
+    V.undo.pop();
+  }
   V.moving = null;
   $('#move-bar').hidden = true;
   scroller.classList.remove('moving-chk');
@@ -1011,6 +1015,31 @@ function endMoveCheck(keep) {
   if (keep) { saveMarks(); toast('이 위치에 고정했어요', 1500); }
 }
 $('#btn-move-ok').onclick = () => endMoveCheck(true);
+
+// 새 체크칸: 화면 가운데에 만들고 바로 이동 모드 (위치 잡고 Enter 고정 / Esc 취소)
+function addCheckAndMove() {
+  if (V.moving || !V.pages.length) return;
+  const sr = scroller.getBoundingClientRect();
+  const cx = sr.left + sr.width / 2, cy = sr.top + sr.height / 2;
+  const hit = document.elementFromPoint(cx, cy);
+  let pageEl = hit && hit.closest('.page');
+  if (!pageEl) { // 가운데가 페이지 사이 여백이면 가장 가까운 페이지
+    let best = Infinity;
+    for (const pg of V.pages) {
+      const r = pg.el.getBoundingClientRect();
+      const d = Math.abs((r.top + r.bottom) / 2 - cy);
+      if (d < best) { best = d; pageEl = pg.el; }
+    }
+  }
+  const r = pageEl.getBoundingClientRect();
+  const it = {
+    id: uid(), type: 'check', page: +pageEl.dataset.page, state: 0,
+    x: clamp((cx - r.left) / r.width, 0.03, 0.97), y: clamp((cy - r.top) / r.height, 0.02, 0.98),
+  };
+  snapshot();
+  V.items.push(it);
+  startMoveCheck(it, true);
+}
 $('#btn-move-cancel').onclick = () => endMoveCheck(false);
 
 function addCheckAt(pageEl, x, y) {
@@ -1061,7 +1090,7 @@ function setCheckMode(on) {
   $('#mode-hint').hidden = !on;
   pagesEl.classList.toggle('checkmode', on);
 }
-$('#btn-check-mode').onclick = () => { clearSel(); setCheckMode(!V.checkMode); };
+$('#btn-check-mode').onclick = () => { clearSel(); addCheckAndMove(); };
 
 /* ---- 문제 번호 / 선지 번호 옆 체크칸 자동 배치 ---- */
 // prev: 다시 배치할 때 지운 예전 자동 체크칸 → 근처에 새로 생긴 칸에 V/W를 옮겨 준다
@@ -1425,6 +1454,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
   if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }
+  else if (e.code === 'KeyS') { e.preventDefault(); clearSel(); addCheckAndMove(); }
   else if (e.key === 'Escape' && V.checkMode) setCheckMode(false);
 });
 
