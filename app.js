@@ -1,5 +1,20 @@
 'use strict';
 
+/* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
+   배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
+const BUILD = 'v15';
+(function checkBuild() {
+  const m = document.querySelector('meta[name="wox-build"]');
+  if ((m && m.content) === BUILD) return;
+  let tried = false;
+  try { tried = sessionStorage.getItem('wox.reload') === BUILD; sessionStorage.setItem('wox.reload', BUILD); } catch (e) { /* 무시 */ }
+  if (!tried) { location.reload(); throw new Error('버전이 달라 새로고침'); }
+})();
+window.addEventListener('error', (e) => { try { toast('오류: ' + e.message, 8000); } catch (_) { /* 무시 */ } });
+window.addEventListener('unhandledrejection', (e) => {
+  try { toast('오류: ' + ((e.reason && e.reason.message) || e.reason), 8000); } catch (_) { /* 무시 */ }
+});
+
 /* =========================================================
    WOX — PDF 위에 체크칸(V/W) · 주석 · 빈칸을 다는 공부용 앱
    모든 데이터는 폰 안(IndexedDB)에 저장된다.
