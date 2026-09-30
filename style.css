@@ -226,12 +226,7 @@ kbd {
 /* 체크칸 이동 모드 */
 .move-bar { align-items: center; }
 .move-hint { font-size: 13px; color: var(--muted); padding: 0 6px 0 8px; white-space: nowrap; }
-.chk.moving {
-  z-index: 8; background: #fff;
-  box-shadow: 0 0 0 .5cqw var(--accent), 0 2px 8px rgba(0,0,0,.3);
-  animation: chk-pulse 1s ease-in-out infinite alternate;
-}
-@keyframes chk-pulse { to { box-shadow: 0 0 0 .9cqw rgba(255,193,69,.45), 0 2px 8px rgba(0,0,0,.3); } }
+.chk.moving { z-index: 8; border-color: #f0a500; } /* 이동 중: 테두리만 노란색 (깜빡임·그림자 없음) */
 .scroller.moving-chk .page { cursor: crosshair; }
 
 /* 주석 입력창 도구 (굵게) */
