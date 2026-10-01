@@ -155,7 +155,7 @@ button { font: inherit; color: inherit; }
 
 /* 주석 말풍선 */
 .note-pop {
-  position: absolute; z-index: 6; min-width: 120px; max-width: min(85cqw, 360px);
+  position: absolute; z-index: 6; min-width: 120px; max-width: min(92cqw, 520px);
   background: #fffbe8; border: 1.5px solid var(--note-mark); border-radius: 10px;
   padding: 8px 11px; font-size: 14px; line-height: 1.5; color: #222;
   box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: pre-wrap; word-break: break-word;
@@ -242,3 +242,9 @@ kbd {
   background: #eaf3ea; color: #2d6a3a; border-bottom: 1px solid var(--line);
 }
 .disk-status.warn { background: #fff4dc; color: #8a5a00; font-weight: 600; }
+
+/* 주석 속 마크다운 표 */
+.note-pop .md-text + .md-table, .note-pop .md-table + .md-text { margin-top: 6px; }
+.md-table { border-collapse: collapse; font-size: 13px; line-height: 1.4; white-space: normal; }
+.md-table th, .md-table td { border: 1px solid #e2c27a; padding: 3px 8px; text-align: left; vertical-align: top; }
+.md-table th { background: #fbecc4; font-weight: 700; }

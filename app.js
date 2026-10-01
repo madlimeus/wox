@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v24';
+const BUILD = 'v25';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -141,8 +141,14 @@ function promptBox(title, init = '', { multiline = false, placeholder = '' } = {
     bBtn.onclick = () => { toggleBold(el); el.focus(); };
     const hint = document.createElement('span');
     hint.className = 'tool-hint';
-    hint.textContent = 'Ctrl+B · **굵게**로 저장돼요';
-    tools.append(bBtn, hint);
+    hint.textContent = 'Ctrl+B 굵게 · 표 줄에서 Enter는 줄바꿈 · Ctrl+Enter 저장';
+    const tBtn = document.createElement('button');
+    tBtn.type = 'button';
+    tBtn.className = 'btn tool-btn';
+    tBtn.textContent = '표';
+    tBtn.onmousedown = (e) => e.preventDefault();
+    tBtn.onclick = () => { insertTable(el); el.focus(); };
+    tools.append(bBtn, tBtn, hint);
     body.append(tools, el);
     el.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyB') { e.preventDefault(); toggleBold(el); }
@@ -153,6 +159,16 @@ function promptBox(title, init = '', { multiline = false, placeholder = '' } = {
     actions: [{ label: '취소', value: null, cls: 'ghost' }, { label: '저장', value: () => el.value, cls: 'primary' }],
     onOpen: () => setTimeout(() => el.focus(), 60),
   });
+}
+
+// 커서 자리에 표 틀을 넣고 첫 칸을 선택
+function insertTable(el) {
+  const tpl = '| 구분 | 내용 |\n|---|---|\n|  |  |\n|  |  |';
+  const v = el.value, a = el.selectionStart, b = el.selectionEnd;
+  const pre = a > 0 && v[a - 1] !== '\n' ? '\n' : '';
+  el.value = v.slice(0, a) + pre + tpl + v.slice(b);
+  const start = a + pre.length + 2;
+  el.setSelectionRange(start, start + 2);
 }
 
 // 선택한 글자 앞뒤에 ** 를 붙이거나(굵게) 떼기(해제). 선택이 없으면 **|** 넣고 커서를 가운데로
@@ -172,9 +188,38 @@ function toggleBold(el) {
 }
 
 // 주석 글자 → 화면용 HTML (**굵게**만 허용, 나머지는 그대로 글자로)
-function noteHtml(text) {
-  const esc = String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function mdInline(t) {
+  const esc = String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   return esc.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+// 주석 글자 → 화면용 HTML: **굵게** + 마크다운 표(| 머리 | … | 다음 줄 |---|---|)
+function noteHtml(text) {
+  const lines = String(text).split('\n');
+  const isRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => mdInline(c.trim()));
+  const blocks = [];
+  let text_ = [];
+  const flush = () => {
+    if (text_.length) blocks.push(`<div class="md-text">${text_.map(mdInline).join('\n')}</div>`);
+    text_ = [];
+  };
+  for (let i = 0; i < lines.length;) {
+    if (isRow(lines[i]) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      flush();
+      const head = cells(lines[i]);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && isRow(lines[i])) rows.push(cells(lines[i++]));
+      blocks.push('<table class="md-table"><thead><tr>' + head.map((c) => `<th>${c}</th>`).join('') +
+        '</tr></thead><tbody>' + rows.map((r) => '<tr>' + head.map((_, k) => `<td>${r[k] || ''}</td>`).join('') + '</tr>').join('') +
+        '</tbody></table>');
+    } else {
+      text_.push(lines[i++]);
+    }
+  }
+  flush();
+  return blocks.join('');
 }
 
 let toastT = null;
@@ -511,6 +556,7 @@ function showHelp() {
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
     '· 주석 굵게: 글자 고르고 Ctrl+B (또는 [B 굵게] 버튼) → **글자**',
+    '· 주석 표: [표] 버튼 또는 | 칸 | 칸 | 다음 줄 |---|---| 형식 (표 줄에서 Enter는 줄바꿈, Ctrl+Enter 저장)',
     '· 빈칸과 주석이 겹치면: 빈칸 → 글자 → 주석 열기 → 닫기 → 다시 빈칸',
     '· 표시를 꾹 누르면 수정 · 삭제 메뉴가 떠요',
     '',
@@ -1443,6 +1489,10 @@ document.addEventListener('keydown', (e) => {
       if (hit) { e.preventDefault(); hit.click(); return; }
     }
     if (field && e.key === 'Enter' && !e.shiftKey) {
+      const v = field.value, a = field.selectionStart;
+      const line = v.slice(v.lastIndexOf('\n', a - 1) + 1, a);
+      const inTable = field.tagName === 'TEXTAREA' && /^\s*\|/.test(line);
+      if (inTable && !(e.ctrlKey || e.metaKey)) return; // 표 줄: 기본 줄바꿈
       e.preventDefault();
       $('#modal-actions .btn.primary').click();
     }
