@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v25';
+const BUILD = 'v26';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -566,7 +566,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 이동 · X X표시 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` 또는 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
@@ -852,7 +852,7 @@ function renderMarks(pnum) {
       d.style.top = it.y * 100 + '%';
       d.textContent = ['', 'V', 'W', 'X'][it.state];
       d.dataset.id = it.id;
-      if (V.moving && V.moving.id === it.id) d.classList.add('moving');
+      if (V.moving && V.moving.ids.includes(it.id)) d.classList.add('moving');
       L.appendChild(d);
       continue;
     }
@@ -865,6 +865,7 @@ function renderMarks(pnum) {
     const r = rt(it.id);
     if (it.type === 'blank') d.classList.add(r.revealed ? 'revealed' : 'covered');
     if (it.type === 'note' && r.open) { d.classList.add('open'); pops.push(it); }
+    if (V.moving && V.moving.ids.includes(it.id)) d.classList.add('moving');
     L.appendChild(d);
     const b = it.type === 'note' ? blanksOver(it)[0] : null;
     // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
@@ -1001,75 +1002,106 @@ async function handleLongPress(target) {
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'note') {
     const v = await sheet('주석', [
+      { label: '주석 위치 이동', value: 'move', key: 'Q' },
       { label: '주석 수정', value: 'edit', key: 'E' },
       { label: '주석 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
-    if (v === 'edit') {
+    if (v === 'move') startMoveCheck(it);
+    else if (v === 'edit') {
       const text = await promptBox('주석 수정', it.text, { multiline: true });
       if (text !== null && text.trim()) { snapshot(); it.text = text.trim(); renderMarks(it.page); saveMarks(); }
     } else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'blank') {
     const v = await sheet('빈칸', [
+      { label: '빈칸 위치 이동', value: 'move', key: 'Q' },
       { label: '이 빈칸에 주석 달기', value: 'note', key: 'Z' },
       { label: '빈칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
-    if (v === 'note') {
+    if (v === 'move') startMoveCheck(it);
+    else if (v === 'note') {
       const text = await promptBox('주석 달기', '', { multiline: true });
       if (text && text.trim()) addItem({ id: uid(), type: 'note', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h, text: text.trim() });
     } else if (v === 'del') removeItem(it.id);
   }
 }
 
-/* ---- 체크칸 하나 이동 (메뉴 → 끌기 → Enter 고정 / Esc 취소) ---- */
+/* ---- 표시 이동 (체크칸·주석·빈칸 공통: 메뉴 → 끌기/클릭 → ` 또는 Enter 고정 · Esc 취소) ----
+   같은 자리에 겹친 빈칸+주석 쌍(C로 만든 것)은 함께 움직인다 */
+const sameRect = (a, b) => a.page === b.page && ['x', 'y', 'w', 'h'].every((k) => Math.abs(a[k] - b[k]) < 0.003);
+const movingItems = () => V.moving.ids.map(byId).filter(Boolean);
+
 function startMoveCheck(it, isNew = false) {
   clearSel();
   setCheckMode(false);
   if (!isNew) snapshot(); // 새 칸은 addCheckAndMove에서 이미 저장
-  V.moving = { id: it.id, isNew, orig: { page: it.page, x: it.x, y: it.y } };
+  const group = it.type === 'check' ? [it]
+    : [it, ...V.items.filter((o) => o !== it && o.type !== 'check' && sameRect(o, it))];
+  for (const g of group) if (g.type === 'note') Object.assign(rt(g.id), { open: false, justClosed: false });
+  V.moving = {
+    id: it.id, ids: group.map((g) => g.id), isNew,
+    orig: group.map((g) => ({ id: g.id, page: g.page, x: g.x, y: g.y })),
+  };
   $('#move-bar').hidden = false;
   scroller.classList.add('moving-chk');
   renderMarks(it.page);
 }
 
+// 레이어를 다시 그리지 않고 위치만 바꾼다 (다시 그리면 손가락 아래 요소가 사라져 터치가 끊김)
+function placeMoving(oldPage) {
+  const items = movingItems();
+  const page = items[0].page;
+  if (page !== oldPage) { renderMarks(oldPage); renderMarks(page); return; }
+  const L = V.pages[page - 1].layer;
+  for (const g of items) {
+    for (const el of L.querySelectorAll(`[data-id="${g.id}"]`)) {
+      el.style.left = g.x * 100 + '%';
+      el.style.top = g.y * 100 + '%';
+    }
+  }
+}
+
 function moveCheckTo(x, y) {
-  const it = byId(V.moving.id);
-  if (!it) return;
+  const main = byId(V.moving.id);
+  if (!main) return;
   const hit = document.elementFromPoint(x, y);
-  const pageEl = (hit && hit.closest('.page')) || V.pages[it.page - 1].el;
+  const pageEl = (hit && hit.closest('.page')) || V.pages[main.page - 1].el;
   const r = pageEl.getBoundingClientRect();
   const page = +pageEl.dataset.page;
-  const oldPage = it.page;
-  it.page = page;
-  it.x = clamp((x - r.left) / r.width, 0, 1);
-  it.y = clamp((y - r.top) / r.height, 0, 1);
-  const el = page === oldPage && V.pages[page - 1].layer.querySelector(`.chk[data-id="${it.id}"]`);
-  if (el) { el.style.left = it.x * 100 + '%'; el.style.top = it.y * 100 + '%'; }
-  else { renderMarks(oldPage); renderMarks(page); }
+  const oldPage = main.page;
+  let nx = clamp((x - r.left) / r.width, 0, 1);
+  let ny = clamp((y - r.top) / r.height, 0, 1);
+  if (main.type !== 'check') { // 영역은 가운데가 손가락(커서)에 오게
+    nx = clamp(nx - main.w / 2, 0, 1 - main.w);
+    ny = clamp(ny - main.h / 2, 0, 1 - main.h);
+  }
+  for (const g of movingItems()) Object.assign(g, { page, x: nx, y: ny });
+  placeMoving(oldPage);
 }
 
 function nudgeCheck(dx, dy) {
-  const it = byId(V.moving.id);
-  if (!it) return;
-  const pg = V.pages[it.page - 1];
-  it.x = clamp(it.x + dx, 0, 1);
-  it.y = clamp(it.y + dy * (pg.w / pg.h), 0, 1); // 가로·세로 같은 거리만큼
-  renderMarks(it.page);
+  const main = byId(V.moving.id);
+  if (!main) return;
+  const pg = V.pages[main.page - 1];
+  const w = main.type === 'check' ? 0 : main.w, h = main.type === 'check' ? 0 : main.h;
+  const nx = clamp(main.x + dx, 0, 1 - w);
+  const ny = clamp(main.y + dy * (pg.w / pg.h), 0, 1 - h); // 가로·세로 같은 거리만큼
+  for (const g of movingItems()) Object.assign(g, { x: nx, y: ny });
+  renderMarks(main.page);
 }
 
 function endMoveCheck(keep) {
   if (!V.moving) return;
-  const it = byId(V.moving.id);
-  const oldPage = it ? it.page : null;
-  if (!keep && it) {
-    if (V.moving.isNew) V.items = V.items.filter((x) => x.id !== it.id); // 새 칸 취소 = 안 만든 것으로
-    else Object.assign(it, V.moving.orig);
+  const pages = new Set();
+  for (const g of movingItems()) pages.add(g.page);
+  if (!keep) {
+    if (V.moving.isNew) V.items = V.items.filter((x) => !V.moving.ids.includes(x.id)); // 새 칸 취소 = 안 만든 것으로
+    else for (const o of V.moving.orig) { const g = byId(o.id); if (g) { Object.assign(g, o); pages.add(o.page); } }
     V.undo.pop();
   }
   V.moving = null;
   $('#move-bar').hidden = true;
   scroller.classList.remove('moving-chk');
-  if (oldPage) renderMarks(oldPage);
-  if (it) renderMarks(it.page);
+  for (const p of pages) renderMarks(p);
   if (keep) { saveMarks(); toast('이 위치에 고정했어요', 1500); }
 }
 $('#btn-move-ok').onclick = () => endMoveCheck(true);

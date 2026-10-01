@@ -248,3 +248,6 @@ kbd {
 .md-table { border-collapse: collapse; font-size: 13px; line-height: 1.4; white-space: normal; }
 .md-table th, .md-table td { border: 1px solid #e2c27a; padding: 3px 8px; text-align: left; vertical-align: top; }
 .md-table th { background: #fbecc4; font-weight: 700; }
+
+/* 주석·빈칸 이동 중: 노란 점선 테두리 */
+.note.moving, .blank.moving { outline: 2px dashed #f0a500; outline-offset: 1px; z-index: 8; }
