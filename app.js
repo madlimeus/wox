@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v23';
+const BUILD = 'v24';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -41,10 +41,12 @@ let dbp = null;
 function openDB() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('wox', 1);
-    r.onupgradeneeded = () => {
+    const r = indexedDB.open('wox', 2);
+    r.onupgradeneeded = () => { // 없는 저장소만 만든다 → 기존 데이터는 그대로
       const d = r.result;
-      for (const s of ['folders', 'files', 'blobs', 'marks']) d.createObjectStore(s, { keyPath: 'id' });
+      for (const s of ['folders', 'files', 'blobs', 'marks', 'settings']) {
+        if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' });
+      }
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -65,8 +67,11 @@ async function tx(store, mode, fn) {
 }
 const dbGet = (st, id) => tx(st, 'readonly', (s) => s.get(id));
 const dbAll = (st) => tx(st, 'readonly', (s) => s.getAll());
-const dbPut = (st, v) => tx(st, 'readwrite', (s) => s.put(v));
-const dbDel = (st, id) => tx(st, 'readwrite', (s) => s.delete(id));
+// raw*: PC 폴더 동기화를 다시 예약하지 않는 내부용 (동기화 코드 자신이 쓴다)
+const rawPut = (st, v) => tx(st, 'readwrite', (s) => s.put(v));
+const rawDel = (st, id) => tx(st, 'readwrite', (s) => s.delete(id));
+const dbPut = (st, v) => rawPut(st, v).then((r) => { diskNotify(st, v && v.id); return r; });
+const dbDel = (st, id) => rawDel(st, id).then((r) => { diskNotify(st, id); return r; });
 
 function requestPersist() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -381,6 +386,9 @@ $('#btn-lib-menu').onclick = async () => {
     { label: '전체 백업 (PDF 포함)', value: 'full' },
     { label: '표시만 백업 (체크·주석·빈칸, 가벼움)', value: 'marks' },
     { label: '백업 파일에서 복원', value: 'restore' },
+    ...(window.showDirectoryPicker ? [disk.handle
+      ? { label: `PC 폴더: ${disk.handle.name} (연결 해제)`, value: 'disk-off' }
+      : { label: 'PC 폴더에 자동 저장 연결', value: 'disk-on' }] : []),
     { label: '저장공간 확인', value: 'storage' },
     { label: '사용법', value: 'help' },
   ]);
@@ -389,6 +397,8 @@ $('#btn-lib-menu').onclick = async () => {
   else if (v === 'marks') exportBackup(false);
   else if (v === 'restore') $('#backup-input').click();
   else if (v === 'storage') showStorage();
+  else if (v === 'disk-on') diskConnect();
+  else if (v === 'disk-off') diskDisconnect();
   else if (v === 'help') showHelp();
 };
 
@@ -750,7 +760,7 @@ function saveMarks() { clearTimeout(saveT); saveT = setTimeout(flushMarks, 250);
 function flushMarks() {
   clearTimeout(saveT);
   if (!V.file) return Promise.resolve();
-  return dbPut('marks', { id: V.file.id, items: V.items, autoDone: V.autoDone });
+  return dbPut('marks', { id: V.file.id, items: V.items, autoDone: V.autoDone, updated: Date.now() });
 }
 function snapshot() {
   V.undo.push(JSON.stringify(V.items));
@@ -1466,5 +1476,223 @@ document.addEventListener('keydown', (e) => {
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+/* =========================================================
+   PC 폴더 자동 저장 (PC 크롬·엣지 전용, File System Access API)
+   - 브라우저 저장소 = 작업용, PC 폴더 = 원본 사본
+   - 폴더 구조: 과목/파일이름.pdf + 과목/파일이름.wox.json(표시) + wox-library.json(목록)
+   - 시작할 때 폴더에서 빠진 파일·더 최신 표시를 불러오고, 바뀐 건 폴더로 쓴다
+   ========================================================= */
+const disk = {
+  handle: null, ok: false, lastIndex: null, full: true,
+  dirtyMarks: new Set(), timer: 0, chain: Promise.resolve(), savedAt: 0, error: '',
+};
+
+function diskNotify(store, id) {
+  if (!disk.handle || store === 'settings') return;
+  if (store === 'marks') disk.dirtyMarks.add(id);
+  clearTimeout(disk.timer);
+  disk.timer = setTimeout(() => diskQueue(diskSync), 1200);
+}
+function diskQueue(fn) {
+  disk.chain = disk.chain.then(fn).catch((err) => {
+    console.error(err);
+    disk.error = String((err && err.message) || err);
+    renderDiskStatus();
+  });
+  return disk.chain;
+}
+
+const safeName = (n) =>
+  String(n || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/[. ]+$/, '').trim().slice(0, 100) || '이름없음';
+
+async function fsDir(root, parts, create) {
+  let d = root;
+  for (const p of parts) d = await d.getDirectoryHandle(p, { create });
+  return d;
+}
+async function fsWrite(root, path, data) {
+  const parts = path.split('/');
+  const name = parts.pop();
+  const fh = await (await fsDir(root, parts, true)).getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(data);
+  await w.close();
+}
+async function fsRead(root, path) { // 없으면 null
+  try {
+    const parts = path.split('/');
+    const name = parts.pop();
+    return await (await (await fsDir(root, parts, false)).getFileHandle(name)).getFile();
+  } catch (e) { return null; }
+}
+async function fsRemove(root, path) {
+  try {
+    const parts = path.split('/');
+    const name = parts.pop();
+    await (await fsDir(root, parts, false)).removeEntry(name);
+    if (parts.length) { // 빈 과목 폴더 정리 (안 비었으면 실패 → 무시)
+      const parent = await fsDir(root, parts.slice(0, -1), false);
+      await parent.removeEntry(parts[parts.length - 1]).catch(() => {});
+    }
+  } catch (e) { /* 이미 없음 */ }
+}
+
+async function diskPermission(ask) {
+  const h = disk.handle;
+  if (!h) return false;
+  if (!h.queryPermission) return true;
+  const opt = { mode: 'readwrite' };
+  if ((await h.queryPermission(opt)) === 'granted') return true;
+  return ask ? (await h.requestPermission(opt)) === 'granted' : false;
+}
+
+// 폴더 → 브라우저: 브라우저에 없는 파일, 폴더 쪽이 더 최신인 표시를 가져온다
+async function diskPull() {
+  const root = disk.handle;
+  const f = await fsRead(root, 'wox-library.json');
+  if (!f) return 0;
+  let idx;
+  try { idx = JSON.parse(await f.text()); } catch (e) { return 0; }
+  disk.lastIndex = idx;
+  const localFolders = new Set((await dbAll('folders')).map((x) => x.id));
+  const localFiles = new Set((await dbAll('files')).map((x) => x.id));
+  let pulled = 0;
+  for (const fo of idx.folders || []) if (!localFolders.has(fo.id)) await rawPut('folders', fo);
+  for (const fm of idx.files || []) {
+    if (!fm.diskPath) continue;
+    if (!localFiles.has(fm.id)) {
+      const pdf = await fsRead(root, fm.diskPath + '.pdf');
+      if (!pdf) continue;
+      await rawPut('blobs', { id: fm.id, blob: new Blob([await pdf.arrayBuffer()], { type: 'application/pdf' }) });
+      await rawPut('files', fm);
+      pulled++;
+    }
+    const mf = await fsRead(root, fm.diskPath + '.wox.json');
+    if (!mf) continue;
+    let dm;
+    try { dm = JSON.parse(await mf.text()); } catch (e) { continue; }
+    const lm = await dbGet('marks', fm.id);
+    if (!lm || (dm.updated || 0) > (lm.updated || 0)) {
+      await rawPut('marks', { id: fm.id, items: dm.items || [], autoDone: !!dm.autoDone, updated: dm.updated || 0 });
+      if (lm) pulled++;
+    }
+  }
+  return pulled;
+}
+
+// 브라우저 → 폴더
+async function diskSync() {
+  if (!disk.handle || !disk.ok) return;
+  const root = disk.handle;
+  const full = disk.full;
+  disk.full = false;
+  const dirty = new Set(disk.dirtyMarks);
+  disk.dirtyMarks.clear();
+  const folders = await dbAll('folders');
+  const files = (await dbAll('files')).sort((a, b) => a.added - b.added);
+  const fname = (id) => (folders.find((f) => f.id === id) || {}).name || '미분류';
+  const used = new Set();
+  for (const f of files) {
+    const base = safeName(fname(f.folderId)) + '/' + safeName(f.name);
+    let p = base, k = 2;
+    while (used.has(p.toLowerCase())) p = `${base} (${k++})`;
+    used.add(p.toLowerCase());
+    const moved = f.diskPath !== p;
+    if (moved || (full && !(await fsRead(root, p + '.pdf')))) {
+      const b = await dbGet('blobs', f.id);
+      if (b) await fsWrite(root, p + '.pdf', b.blob);
+      if (moved && f.diskPath) {
+        await fsRemove(root, f.diskPath + '.pdf');
+        await fsRemove(root, f.diskPath + '.wox.json');
+      }
+      f.diskPath = p;
+      await rawPut('files', f);
+      if (V.file && V.file.id === f.id) V.file.diskPath = p;
+      dirty.add(f.id);
+    }
+    if (full || dirty.has(f.id)) {
+      const m = (await dbGet('marks', f.id)) || { id: f.id, items: [], autoDone: false, updated: 0 };
+      await fsWrite(root, p + '.wox.json', JSON.stringify({ app: 'wox', file: f.name, ...m }));
+    }
+  }
+  // 브라우저에서 지운 파일은 폴더에서도 지운다
+  const now = new Set(files.map((f) => f.id));
+  for (const old of (disk.lastIndex && disk.lastIndex.files) || []) {
+    if (!now.has(old.id) && old.diskPath) {
+      await fsRemove(root, old.diskPath + '.pdf');
+      await fsRemove(root, old.diskPath + '.wox.json');
+    }
+  }
+  const idx = { app: 'wox', v: 1, saved: Date.now(), folders, files };
+  await fsWrite(root, 'wox-library.json', JSON.stringify(idx, null, 1));
+  disk.lastIndex = idx;
+  disk.savedAt = Date.now();
+  disk.error = '';
+  renderDiskStatus();
+}
+
+async function diskStart(ask) {
+  disk.ok = await diskPermission(ask);
+  renderDiskStatus();
+  if (!disk.ok) return;
+  await diskQueue(async () => {
+    const pulled = await diskPull();
+    if (pulled) { await loadLibrary(); toast(`PC 폴더에서 ${pulled}개를 불러왔어요`); }
+    disk.full = true;
+    await diskSync();
+  });
+}
+
+async function diskConnect() {
+  let h;
+  try {
+    h = await window.showDirectoryPicker({ id: 'wox-data', mode: 'readwrite', startIn: 'documents' });
+  } catch (e) { return; } // 취소
+  disk.handle = h;
+  await rawPut('settings', { id: 'disk', handle: h });
+  toast('PC 폴더에 저장하는 중…', 60000);
+  await diskStart(true);
+  if (disk.ok) toast(`PC 폴더 "${h.name}"에 자동 저장을 시작했어요`, 3500);
+}
+
+async function diskDisconnect() {
+  if (!(await confirmBox('PC 폴더 연결 해제', `"${disk.handle.name}" 폴더 자동 저장을 멈출까요? 폴더 안 파일은 지워지지 않아요.`, '해제'))) return;
+  disk.handle = null;
+  disk.ok = false;
+  disk.lastIndex = null;
+  await rawDel('settings', 'disk');
+  renderDiskStatus();
+}
+
+function renderDiskStatus() {
+  const el = $('#disk-status');
+  if (!disk.handle) { el.hidden = true; return; }
+  el.hidden = false;
+  el.className = 'disk-status' + (disk.ok && !disk.error ? '' : ' warn');
+  if (!disk.ok) {
+    el.textContent = `💾 PC 폴더 "${disk.handle.name}" 다시 연결하려면 여기를 누르세요`;
+  } else if (disk.error) {
+    el.textContent = `⚠️ PC 폴더 저장 실패: ${disk.error} (누르면 다시 시도)`;
+  } else {
+    const t = disk.savedAt ? new Date(disk.savedAt) : null;
+    el.textContent = `💾 PC 폴더 "${disk.handle.name}"에 자동 저장 중` +
+      (t ? ` · ${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')} 저장됨` : '');
+  }
+}
+$('#disk-status').onclick = () => {
+  if (!disk.handle) return;
+  if (!disk.ok || disk.error) { disk.error = ''; diskStart(true); }
+};
+
+async function diskInit() {
+  if (!window.showDirectoryPicker) return;
+  let rec = null;
+  try { rec = await dbGet('settings', 'disk'); } catch (e) { return; }
+  if (!rec || !rec.handle) return;
+  disk.handle = rec.handle;
+  await diskStart(false);
+}
+
 showScreen('library');
-loadLibrary();
+loadLibrary().then(diskInit);
+

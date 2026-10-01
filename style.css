@@ -235,3 +235,10 @@ kbd {
 .tool-btn { padding: 5px 10px; font-weight: 500; font-size: 13px; }
 .tool-hint { font-size: 12px; color: var(--muted); }
 .note-pop b { font-weight: 800; }
+
+/* PC 폴더 자동 저장 상태 줄 */
+.disk-status {
+  flex: none; font-size: 12.5px; padding: 7px 14px; cursor: pointer;
+  background: #eaf3ea; color: #2d6a3a; border-bottom: 1px solid var(--line);
+}
+.disk-status.warn { background: #fff4dc; color: #8a5a00; font-weight: 600; }
