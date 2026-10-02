@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v26';
+const BUILD = 'v27';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -566,7 +566,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` 또는 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · Esc 취소',
@@ -1003,11 +1003,17 @@ async function handleLongPress(target) {
   } else if (it.type === 'note') {
     const v = await sheet('주석', [
       { label: '주석 위치 이동', value: 'move', key: 'Q' },
+      { label: '이 주석에 빈칸 추가', value: 'blank', key: 'X' },
       { label: '주석 수정', value: 'edit', key: 'E' },
       { label: '주석 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
-    else if (v === 'edit') {
+    else if (v === 'blank') {
+      // 주석과 같은 자리·크기로 빈칸 → C로 만든 빈칸+주석 쌍과 똑같이 동작
+      if (V.items.some((o) => o.type === 'blank' && sameRect(o, it))) { toast('이미 빈칸이 있어요'); return; }
+      Object.assign(rt(it.id), { open: false, justClosed: false });
+      addItem({ id: uid(), type: 'blank', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h });
+    } else if (v === 'edit') {
       const text = await promptBox('주석 수정', it.text, { multiline: true });
       if (text !== null && text.trim()) { snapshot(); it.text = text.trim(); renderMarks(it.page); saveMarks(); }
     } else if (v === 'del') removeItem(it.id);
