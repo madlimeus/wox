@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v31';
+const BUILD = 'v32';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -857,12 +857,11 @@ function renderMarks(pnum) {
       L.appendChild(d);
       continue;
     }
-    if (it.type === 'memo') { // 메모: 누르지 않아도 글자가 바로 보이는 메모지 (너비 = 선택 영역, 높이 = 내용)
+    if (it.type === 'memo') { // 메모: 누르지 않아도 글자가 바로 보이는 메모지 (크기는 내용에 맞춤, 말풍선과 같은 글자 크기)
       const m = div('memo');
       m.dataset.id = it.id;
       m.style.left = it.x * 100 + '%';
       m.style.top = it.y * 100 + '%';
-      m.style.width = it.w * 100 + '%';
       m.innerHTML = noteHtml(it.text);
       if (V.moving && V.moving.ids.includes(it.id)) m.classList.add('moving');
       L.appendChild(m);
