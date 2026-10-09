@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v32';
+const BUILD = 'v33';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -992,7 +992,14 @@ function handleTap(target, x, y) {
   if (it.type === 'check') cycleCheck(it);
   else if (it.type === 'blank') tapBlank(it);
   else if (it.type === 'note') tapNote(it);
-  // memo: 탭해도 그대로 (항상 보임)
+  else if (it.type === 'memo') {
+    // 메모는 탭해도 그대로. 단, 열린 빈칸 안에 있으면 그 빈칸을 다시 가린다
+    const pr = pageEl.getBoundingClientRect();
+    const nx = (x - pr.left) / pr.width, ny = (y - pr.top) / pr.height;
+    const b = V.items.find((o) => o.type === 'blank' && o.page === it.page && rt(o.id).revealed &&
+      nx >= o.x && nx <= o.x + o.w && ny >= o.y && ny <= o.y + o.h);
+    if (b) tapBlank(b);
+  }
 }
 
 async function handleLongPress(target) {
