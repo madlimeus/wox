@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v34';
+const BUILD = 'v35';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -1580,6 +1580,7 @@ scroller.addEventListener('wheel', (e) => {
    - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
    ========================================================= */
 document.addEventListener('keydown', (e) => {
+  document.body.classList.add('has-kbd'); // 키보드가 있으면 단축키 안내를 항상 보여 준다
   if (e.isComposing) return;
   if (modalResolve) {
     if (e.key === 'Escape') { e.preventDefault(); closeModal(null); return; }

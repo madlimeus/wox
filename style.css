@@ -180,7 +180,9 @@ kbd {
   display: none; font: 600 11px/1 ui-monospace, monospace; padding: 2px 5px; margin-left: 4px;
   border: 1px solid currentColor; border-radius: 4px; opacity: .6; vertical-align: 1px;
 }
-@media (hover: hover) and (pointer: fine) { kbd { display: inline-block; } } /* 키보드 있는 PC에서만 표시 */
+/* 단축키 안내: 마우스가 하나라도 있으면(터치스크린 노트북 포함) 표시, 키보드를 한 번 누르면 무조건 표시 */
+@media (any-pointer: fine), (any-hover: hover) { kbd { display: inline-block; } }
+body.has-kbd kbd { display: inline-block; }
 
 .zoom-btn {
   height: 30px; padding: 0 10px; border: 1px solid rgba(255,255,255,.4); border-radius: 999px;
