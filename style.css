@@ -264,3 +264,8 @@ kbd {
 .memo .md-text + .md-table, .memo .md-table + .md-text { margin-top: .4em; }
 .memo.moving { outline: 2px dashed #f0a500; outline-offset: 1px; z-index: 8; }
 @media (max-width: 420px) { .sel-bar .btn { padding: 10px 8px; font-size: 13.5px; } }
+
+/* 형광펜: 주석 바탕과 같은 진하기(22%), 차분한 로즈 핑크 */
+.hl { position: absolute; z-index: 1; background: rgba(232, 120, 156, .22); border-radius: 2px; }
+.hl.moving { outline: 2px dashed #f0a500; outline-offset: 1px; z-index: 8; }
+@media (max-width: 420px) { .sel-bar { gap: 4px; padding: 5px; } .sel-bar .btn { padding: 9px 7px; font-size: 13px; } }

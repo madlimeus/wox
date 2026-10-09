@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v33';
+const BUILD = 'v34';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -552,8 +552,9 @@ function showHelp() {
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
-    '· 아래 [주석] [빈칸] [빈칸+주석] [메모] 중 하나를 누르세요',
+    '· 아래 [주석] [빈칸] [빈칸+주석] [메모] [형광] 중 하나를 누르세요',
     '· 메모: 누르지 않아도 글자가 바로 보이는 메모지',
+    '· 형광: 선택 영역을 형광펜처럼 칠하기',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
     '· 주석 굵게: 글자 고르고 Ctrl+B (또는 [B 굵게] 버튼) → **글자**',
@@ -570,7 +571,7 @@ function showHelp() {
     '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` 또는 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
-    '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · Esc 취소',
+    '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
     '· S 체크칸 추가 · A 100%↔200% · Ctrl+Z 되돌리기',
     '',
@@ -857,6 +858,17 @@ function renderMarks(pnum) {
       L.appendChild(d);
       continue;
     }
+    if (it.type === 'hl') { // 형광펜
+      const h = div('hl');
+      h.dataset.id = it.id;
+      h.style.left = it.x * 100 + '%';
+      h.style.top = it.y * 100 + '%';
+      h.style.width = it.w * 100 + '%';
+      h.style.height = it.h * 100 + '%';
+      if (V.moving && V.moving.ids.includes(it.id)) h.classList.add('moving');
+      L.appendChild(h);
+      continue;
+    }
     if (it.type === 'memo') { // 메모: 누르지 않아도 글자가 바로 보이는 메모지 (크기는 내용에 맞춤, 말풍선과 같은 글자 크기)
       const m = div('memo');
       m.dataset.id = it.id;
@@ -992,8 +1004,8 @@ function handleTap(target, x, y) {
   if (it.type === 'check') cycleCheck(it);
   else if (it.type === 'blank') tapBlank(it);
   else if (it.type === 'note') tapNote(it);
-  else if (it.type === 'memo') {
-    // 메모는 탭해도 그대로. 단, 열린 빈칸 안에 있으면 그 빈칸을 다시 가린다
+  else if (it.type === 'memo' || it.type === 'hl') {
+    // 메모·형광펜은 탭해도 그대로. 단, 열린 빈칸 안에 있으면 그 빈칸을 다시 가린다
     const pr = pageEl.getBoundingClientRect();
     const nx = (x - pr.left) / pr.width, ny = (y - pr.top) / pr.height;
     const b = V.items.find((o) => o.type === 'blank' && o.page === it.page && rt(o.id).revealed &&
@@ -1047,6 +1059,13 @@ async function handleLongPress(target) {
       const text = await promptBox('주석 달기', '', { multiline: true });
       if (text && text.trim()) addItem({ id: uid(), type: 'note', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h, text: text.trim() });
     } else if (v === 'del') removeItem(it.id);
+  } else if (it.type === 'hl') {
+    const v = await sheet('형광펜', [
+      { label: '형광펜 위치 이동', value: 'move', key: 'Q' },
+      { label: '형광펜 삭제', value: 'del', cls: 'danger', key: 'D' },
+    ]);
+    if (v === 'move') startMoveCheck(it);
+    else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'memo') {
     const v = await sheet('메모', [
       { label: '메모 위치 이동', value: 'move', key: 'Q' },
@@ -1191,6 +1210,11 @@ $('#btn-sel-blank').onclick = () => {
 };
 // 빈칸 + 주석을 같은 영역에 한 번에 (되돌리기 한 번에 둘 다 취소)
 // 메모: 선택 영역에 글자가 바로 보이는 메모지
+// 형광펜: 선택 영역을 칠한다
+$('#btn-sel-hl').onclick = () => {
+  const s = clearSel();
+  if (s) addItem({ id: uid(), type: 'hl', ...s });
+};
 $('#btn-sel-memo').onclick = async () => {
   const s = V.sel;
   if (!s) return;
@@ -1551,7 +1575,7 @@ scroller.addEventListener('wheel', (e) => {
 
 /* =========================================================
    단축키 (한글 입력 상태여도 동작하도록 e.code 사용)
-   - 영역 선택 후: Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모 · Esc 취소
+   - 영역 선택 후: Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모 · D 형광펜 · Esc 취소
    - Ctrl+Z 되돌리기 · A 100%↔200%
    - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
    ========================================================= */
@@ -1590,6 +1614,7 @@ document.addEventListener('keydown', (e) => {
     if (e.code === 'KeyX') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
     if (e.code === 'KeyC') { e.preventDefault(); $('#btn-sel-both').click(); return; }
     if (e.code === 'KeyA') { e.preventDefault(); $('#btn-sel-memo').click(); return; }
+    if (e.code === 'KeyD') { e.preventDefault(); $('#btn-sel-hl').click(); return; }
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
   if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }
