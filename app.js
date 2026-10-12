@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v39';
+const BUILD = 'v40';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -548,7 +548,7 @@ function showHelp() {
     '■ 체크칸',
     '· 문제 번호 옆에 체크칸이 자동으로 생겨요',
     '· 탭할 때마다 빈칸 → V → W → 빈칸',
-    '· 위의 ☐ 버튼 (PC는 ` 또는 S): 새 체크칸 → 끌어서 위치 잡고 [고정] (` 또는 Enter) · 취소는 Esc',
+    '· 위의 ☐ 버튼 (PC는 ` 또는 S): 새 체크칸 → 끌어서 위치 잡고 [고정] (` · S · Enter) · 취소는 Esc',
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
@@ -569,12 +569,12 @@ function showHelp() {
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
     '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
-    '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` 또는 Enter 고정 · Esc 취소 · 방향키 미세조정',
+    '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` · S · Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
     '· 드래그 후 Shift+드래그: 영역 추가 → 한 묶음으로 만들어져 한 번에 열리고 닫힘',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
-    '· ` 또는 S 체크칸 추가 (` 로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
+    '· ` 또는 S 체크칸 추가 (` 또는 S로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
     '',
     '· ↶ 되돌리기',
     '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
@@ -1670,7 +1670,7 @@ document.addEventListener('keydown', (e) => {
   if (V.moving) {
     const step = e.shiftKey ? 0.01 : 0.002;
     const arrows = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
-    if (e.key === 'Enter' || e.code === 'Backquote') { e.preventDefault(); if (!e.repeat) endMoveCheck(true); } // ` 는 Esc 바로 아래라 가까움 (꾹 눌러 반복되는 건 무시)
+    if (e.key === 'Enter' || e.code === 'Backquote' || e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) endMoveCheck(true); } // ` · S · Enter 고정 (꾹 눌러 반복되는 건 무시)
     else if (e.key === 'Escape') { e.preventDefault(); endMoveCheck(false); }
     else if (arrows[e.key]) { e.preventDefault(); nudgeCheck(...arrows[e.key]); }
     return;
