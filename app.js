@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v38';
+const BUILD = 'v39';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -572,6 +572,7 @@ function showHelp() {
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` 또는 Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
+    '· 드래그 후 Shift+드래그: 영역 추가 → 한 묶음으로 만들어져 한 번에 열리고 닫힘',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
     '· ` 또는 S 체크칸 추가 (` 로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
     '',
@@ -593,7 +594,7 @@ const V = {
   file: null, doc: null, pages: [], token: 0,
   zoom: 1, scale: 1, items: [], autoDone: false,
   checkMode: false, undo: [], runtime: new Map(),
-  sel: null, selEl: null, io: null,
+  sel: null, selEl: null, selPrev: [], io: null,
 };
 
 async function openFile(id) {
@@ -823,6 +824,10 @@ $('#btn-undo').onclick = () => {
 };
 
 const byId = (id) => V.items.find((x) => x.id === id);
+// 묶음(Shift 드래그로 여러 영역을 한 번에 만든 것)은 열림·닫힘 상태를 함께 쓴다
+const rtI = (it) => rt(it.g || it.id);
+const groupOf = (it) => (it.g ? V.items.filter((o) => o.g === it.g) : [it]);
+const sortPos = (a, b) => a.page - b.page || a.y - b.y || a.x - b.x;
 function rt(id) {
   if (!V.runtime.has(id)) V.runtime.set(id, { revealed: false, open: false, justClosed: false });
   return V.runtime.get(id);
@@ -885,14 +890,18 @@ function renderMarks(pnum) {
     d.style.top = it.y * 100 + '%';
     d.style.width = it.w * 100 + '%';
     d.style.height = it.h * 100 + '%';
-    const r = rt(it.id);
+    const r = rtI(it);
+    const sameNotes = it.type === 'note' && it.g ? groupOf(it).filter((o) => o.type === 'note').sort(sortPos) : null;
     if (it.type === 'blank') d.classList.add(r.revealed ? 'revealed' : 'covered');
-    if (it.type === 'note' && r.open) { d.classList.add('open'); pops.push(it); }
+    if (it.type === 'note' && r.open) {
+      d.classList.add('open');
+      if (!sameNotes || sameNotes[sameNotes.length - 1] === it) pops.push(it); // 묶음은 맨 아래 영역 밑에 하나만
+    }
     if (V.moving && V.moving.ids.includes(it.id)) d.classList.add('moving');
     L.appendChild(d);
     const b = it.type === 'note' ? blanksOver(it)[0] : null;
     // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
-    if (it.type === 'note' && !(b && !rt(b.id).revealed)) {
+    if (it.type === 'note' && !(b && !rtI(b).revealed) && (!sameNotes || sameNotes[0] === it)) {
       // 세모: 세로 = 겹친 빈칸 세로(없으면 주석 영역 세로)의 절반, 가로 = 세로와 같은 길이
       const top = b ? b.y : it.y, h = (b ? b.h : it.h) / 2;
       const tri = div('note-tri');
@@ -913,6 +922,14 @@ function renderMarks(pnum) {
     else p.style.top = `calc(${(n.y + n.h) * 100}% + 4px)`;
     L.appendChild(p);
   }
+  for (const p of V.selPrev) {
+    if (p.r.page !== pnum) continue;
+    p.el = div('sel');
+    Object.assign(p.el.style, {
+      left: p.r.x * 100 + '%', top: p.r.y * 100 + '%', width: p.r.w * 100 + '%', height: p.r.h * 100 + '%',
+    });
+    L.appendChild(p.el);
+  }
   if (V.sel && V.sel.page === pnum) {
     V.selEl = div('sel');
     placeSel();
@@ -927,6 +944,13 @@ function placeSel() {
   });
 }
 
+function addItems(list) {
+  if (!list.length) return;
+  snapshot();
+  V.items.push(...list);
+  for (const p of new Set(list.map((o) => o.page))) renderMarks(p);
+  saveMarks();
+}
 function addItem(it) {
   snapshot();
   V.items.push(it);
@@ -937,9 +961,11 @@ function removeItem(id) {
   const it = byId(id);
   if (!it) return;
   snapshot();
-  V.items = V.items.filter((x) => x.id !== id);
+  const gone = it.g ? groupOf(it).filter((o) => o.type === it.type) : [it];
+  const pages = new Set(gone.map((o) => o.page));
+  V.items = V.items.filter((x) => !gone.includes(x));
   V.runtime.delete(id);
-  renderMarks(it.page);
+  for (const p of pages) renderMarks(p);
   saveMarks();
 }
 
@@ -952,38 +978,39 @@ function cycleCheck(it) {
 }
 
 function tapBlank(b) {
-  const r = rt(b.id);
+  const r = rtI(b);
+  const blanks = groupOf(b).filter((o) => o.type === 'blank');
   if (!r.revealed) {
     r.revealed = true;
   } else {
     r.revealed = false;
-    for (const n of notesUnder(b)) Object.assign(rt(n.id), { open: false, justClosed: false });
+    for (const bb of blanks) for (const n of notesUnder(bb)) Object.assign(rtI(n), { open: false, justClosed: false });
   }
-  renderMarks(b.page);
+  for (const p of new Set(blanks.map((o) => o.page))) renderMarks(p);
 }
 
 // 겹친 경우: 빈칸 → (탭) 글자+주석표시 → (탭) 주석 열림 → (탭) 닫힘 → (탭) 다시 빈칸
 function tapNote(n) {
-  const r = rt(n.id);
-  const parent = blanksOver(n).find((b) => rt(b.id).revealed);
+  const r = rtI(n);
+  const parent = blanksOver(n).find((b) => rtI(b).revealed);
   if (r.open) {
     r.open = false;
     r.justClosed = !!parent;
   } else if (r.justClosed && parent) {
     r.justClosed = false;
-    rt(parent.id).revealed = false;
+    rtI(parent).revealed = false;
   } else {
     r.open = true;
     r.justClosed = false;
   }
-  renderMarks(n.page);
+  for (const p of new Set(groupOf(n).map((o) => o.page))) renderMarks(p);
 }
 
 function closeAllNotes() {
   let changed = false;
   for (const it of V.items) {
     if (it.type !== 'note') continue;
-    const r = rt(it.id);
+    const r = rtI(it);
     if (r.open) { r.open = false; changed = true; }
   }
   if (changed) renderAllMarks();
@@ -1008,7 +1035,7 @@ function handleTap(target, x, y) {
     // 메모·형광펜은 탭해도 그대로. 단, 열린 빈칸 안에 있으면 그 빈칸을 다시 가린다
     const pr = pageEl.getBoundingClientRect();
     const nx = (x - pr.left) / pr.width, ny = (y - pr.top) / pr.height;
-    const b = V.items.find((o) => o.type === 'blank' && o.page === it.page && rt(o.id).revealed &&
+    const b = V.items.find((o) => o.type === 'blank' && o.page === it.page && rtI(o).revealed &&
       nx >= o.x && nx <= o.x + o.w && ny >= o.y && ny <= o.y + o.h);
     if (b) tapBlank(b);
   }
@@ -1042,11 +1069,17 @@ async function handleLongPress(target) {
     else if (v === 'blank') {
       // 주석과 같은 자리·크기로 빈칸 → C로 만든 빈칸+주석 쌍과 똑같이 동작
       if (V.items.some((o) => o.type === 'blank' && sameRect(o, it))) { toast('이미 빈칸이 있어요'); return; }
-      Object.assign(rt(it.id), { open: false, justClosed: false });
-      addItem({ id: uid(), type: 'blank', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h });
+      Object.assign(rtI(it), { open: false, justClosed: false });
+      const notes = groupOf(it).filter((o) => o.type === 'note');
+      addItems(notes.map((n) => ({ id: uid(), type: 'blank', page: n.page, x: n.x, y: n.y, w: n.w, h: n.h, ...(n.g ? { g: n.g } : {}) })));
     } else if (v === 'edit') {
       const text = await promptBox('주석 수정', it.text, { multiline: true });
-      if (text !== null && text.trim()) { snapshot(); it.text = text.trim(); renderMarks(it.page); saveMarks(); }
+      if (text !== null && text.trim()) {
+        snapshot();
+        for (const n of groupOf(it)) if (n.type === 'note') n.text = text.trim();
+        renderAllMarks();
+        saveMarks();
+      }
     } else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'blank') {
     const v = await sheet('빈칸', [
@@ -1057,7 +1090,10 @@ async function handleLongPress(target) {
     if (v === 'move') startMoveCheck(it);
     else if (v === 'note') {
       const text = await promptBox('주석 달기', '', { multiline: true });
-      if (text && text.trim()) addItem({ id: uid(), type: 'note', page: it.page, x: it.x, y: it.y, w: it.w, h: it.h, text: text.trim() });
+      const blanks = groupOf(it).filter((o) => o.type === 'blank');
+      if (text && text.trim()) {
+        addItems(blanks.map((bb) => ({ id: uid(), type: 'note', page: bb.page, x: bb.x, y: bb.y, w: bb.w, h: bb.h, text: text.trim(), ...(bb.g ? { g: bb.g } : {}) })));
+      }
     } else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'hl') {
     const v = await sheet('형광펜', [
@@ -1089,9 +1125,13 @@ function startMoveCheck(it, isNew = false) {
   clearSel();
   setCheckMode(false);
   if (!isNew) snapshot(); // 새 칸은 addCheckAndMove에서 이미 저장
-  const group = it.type === 'check' ? [it]
-    : [it, ...V.items.filter((o) => o !== it && o.type !== 'check' && sameRect(o, it))];
-  for (const g of group) if (g.type === 'note') Object.assign(rt(g.id), { open: false, justClosed: false });
+  let group = [it];
+  if (it.type !== 'check') {
+    const base = groupOf(it);
+    group = [...new Set([...base, ...V.items.filter((o) => o.type !== 'check' && base.some((bb) => sameRect(o, bb)))])];
+    group = [it, ...group.filter((o) => o !== it)];
+  }
+  for (const g of group) if (g.type === 'note') Object.assign(rtI(g), { open: false, justClosed: false });
   V.moving = {
     id: it.id, ids: group.map((g) => g.id), isNew,
     orig: group.map((g) => ({ id: g.id, page: g.page, x: g.x, y: g.y })),
@@ -1104,7 +1144,7 @@ function startMoveCheck(it, isNew = false) {
 // 레이어를 다시 그리지 않고 위치만 바꾼다 (다시 그리면 손가락 아래 요소가 사라져 터치가 끊김)
 function placeMoving(oldPage) {
   const items = movingItems();
-  const page = items[0].page;
+  const page = byId(V.moving.id).page;
   if (page !== oldPage) { renderMarks(oldPage); renderMarks(page); return; }
   const L = V.pages[page - 1].layer;
   for (const g of items) {
@@ -1129,7 +1169,12 @@ function moveCheckTo(x, y) {
     nx = clamp(nx - main.w / 2, 0, 1 - main.w);
     ny = clamp(ny - main.h / 2, 0, 1 - main.h);
   }
-  for (const g of movingItems()) Object.assign(g, { page, x: nx, y: ny });
+  const dx = nx - main.x, dy = ny - main.y;
+  for (const g of movingItems()) {
+    g.page = page;
+    g.x = clamp(g.x + dx, 0, 1 - (g.w || 0));
+    g.y = clamp(g.y + dy, 0, 1 - (g.h || 0));
+  }
   placeMoving(oldPage);
 }
 
@@ -1140,7 +1185,11 @@ function nudgeCheck(dx, dy) {
   const w = main.type === 'check' ? 0 : main.w, h = main.type === 'check' ? 0 : main.h;
   const nx = clamp(main.x + dx, 0, 1 - w);
   const ny = clamp(main.y + dy * (pg.w / pg.h), 0, 1 - h); // 가로·세로 같은 거리만큼
-  for (const g of movingItems()) Object.assign(g, { x: nx, y: ny });
+  const ddx = nx - main.x, ddy = ny - main.y;
+  for (const g of movingItems()) {
+    g.x = clamp(g.x + ddx, 0, 1 - (g.w || 0));
+    g.y = clamp(g.y + ddy, 0, 1 - (g.h || 0));
+  }
   renderMarks(main.page);
 }
 
@@ -1196,49 +1245,55 @@ function addCheckAt(pageEl, x, y) {
 }
 
 /* ---- 선택 영역 → 주석 / 빈칸 ---- */
+// 돌려주는 값: 선택한 영역들(Shift로 추가한 것 포함), 없으면 null
 function clearSel() {
-  const had = V.sel;
+  const rects = V.sel ? [...V.selPrev.map((p) => p.r), V.sel] : null;
   V.sel = null;
   if (V.selEl) { V.selEl.remove(); V.selEl = null; }
+  for (const p of V.selPrev) if (p.el) p.el.remove();
+  V.selPrev = [];
   $('#sel-bar').hidden = true;
-  return had;
+  return rects;
+}
+// 여러 영역이면 같은 묶음 번호(g)를 붙여 한 번에 열리고 닫히게 한다
+function makeItems(rects, type, extra = {}, g = null) {
+  if (!g && rects.length > 1) g = uid();
+  return rects.map((r) => ({ id: uid(), type, ...r, ...extra, ...(g ? { g } : {}) }));
 }
 $('#btn-sel-cancel').onclick = () => clearSel();
 $('#btn-sel-blank').onclick = () => {
-  const s = clearSel();
-  if (s) addItem({ id: uid(), type: 'blank', ...s });
+  const rs = clearSel();
+  if (rs) addItems(makeItems(rs, 'blank'));
 };
 // 빈칸 + 주석을 같은 영역에 한 번에 (되돌리기 한 번에 둘 다 취소)
 // 메모: 선택 영역에 글자가 바로 보이는 메모지
 // 형광펜: 선택 영역을 칠한다
 $('#btn-sel-hl').onclick = () => {
-  const s = clearSel();
-  if (s) addItem({ id: uid(), type: 'hl', ...s });
+  const rs = clearSel();
+  if (rs) addItems(makeItems(rs, 'hl'));
 };
 $('#btn-sel-memo').onclick = async () => {
   const s = V.sel;
   if (!s) return;
   const text = await promptBox('메모', '', { multiline: true, placeholder: '페이지에 바로 보일 메모' });
-  clearSel();
-  if (text && text.trim()) addItem({ id: uid(), type: 'memo', ...s, text: text.trim() });
+  const rs = clearSel();
+  if (text && text.trim()) addItem({ id: uid(), type: 'memo', ...(rs ? rs[0] : s), text: text.trim() }); // 메모는 첫 영역 하나
 };
 $('#btn-sel-both').onclick = async () => {
   const s = V.sel;
   if (!s) return;
   const text = await promptBox('빈칸 + 주석', '', { multiline: true, placeholder: '빈칸에 달 주석' });
-  clearSel();
+  const rs = clearSel() || [s];
   if (!text || !text.trim()) return;
-  snapshot();
-  V.items.push({ id: uid(), type: 'blank', ...s }, { id: uid(), type: 'note', ...s, text: text.trim() });
-  renderMarks(s.page);
-  saveMarks();
+  const g = rs.length > 1 ? uid() : null;
+  addItems([...makeItems(rs, 'blank', {}, g), ...makeItems(rs, 'note', { text: text.trim() }, g)]);
 };
 $('#btn-sel-note').onclick = async () => {
   const s = V.sel;
   if (!s) return;
   const text = await promptBox('주석 달기', '', { multiline: true, placeholder: '예: SHA-3의 기반이 된 알고리즘' });
-  clearSel();
-  if (text && text.trim()) addItem({ id: uid(), type: 'note', ...s, text: text.trim() });
+  const rs = clearSel() || [s];
+  if (text && text.trim()) addItems(makeItems(rs, 'note', { text: text.trim() }));
 };
 
 /* ---- 체크칸 배치 모드 ---- */
@@ -1322,8 +1377,8 @@ $('#btn-view-menu').onclick = async () => {
   ]);
   if (v === 'cover' || v === 'reveal') {
     for (const it of V.items) {
-      if (it.type === 'blank') rt(it.id).revealed = v === 'reveal';
-      if (it.type === 'note') Object.assign(rt(it.id), { open: false, justClosed: false });
+      if (it.type === 'blank') rtI(it).revealed = v === 'reveal';
+      if (it.type === 'note') Object.assign(rtI(it), { open: false, justClosed: false });
     }
     renderAllMarks();
   } else if (v === 'resetchk') {
@@ -1360,7 +1415,7 @@ $('#btn-view-menu').onclick = async () => {
 const LONG_MS = 380, MOVE_TOL = 10;
 const G = { mode: null, timer: 0 };
 
-function gBegin(x, y, target, mouse = false) {
+function gBegin(x, y, target, mouse = false, shift = false) {
   clearTimeout(G.timer);
   if (V.moving) { // 체크칸 이동 모드: 누른 곳으로 바로 옮기고 끄는 대로 따라감
     G.mode = 'movechk';
@@ -1368,7 +1423,7 @@ function gBegin(x, y, target, mouse = false) {
     return;
   }
   Object.assign(G, {
-    mode: 'pending', sx: x, sy: y, target, mouse,
+    mode: 'pending', sx: x, sy: y, target, mouse, shift,
     pageEl: target.closest('.page'),
     chkEl: V.checkMode ? target.closest('.chk') : null,
   });
@@ -1403,7 +1458,12 @@ function gMove(x, y) {
   }
   if (G.mode === 'held') {
     if (dist > MOVE_TOL && G.pageEl && !V.checkMode) {
-      clearSel();
+      if (G.shift && V.sel && !$('#sel-bar').hidden) { // Shift + 드래그: 지금 선택을 남기고 영역 추가
+        V.selPrev.push({ r: V.sel, el: V.selEl });
+        V.sel = null;
+        V.selEl = null;
+        $('#sel-bar').hidden = true;
+      } else clearSel();
       const r = G.pageEl.getBoundingClientRect();
       G.nx0 = clamp((G.sx - r.left) / r.width, 0, 1);
       G.ny0 = clamp((G.sy - r.top) / r.height, 0, 1);
@@ -1449,8 +1509,15 @@ function gEnd() {
   else if (mode === 'held') handleLongPress(G.target);
   else if (mode === 'select') {
     const r = G.pageEl.getBoundingClientRect();
-    if (V.sel.w * r.width < 8 || V.sel.h * r.height < 5) clearSel();
-    else $('#sel-bar').hidden = false;
+    if (V.sel.w * r.width < 8 || V.sel.h * r.height < 5) {
+      if (V.selPrev.length) { // 너무 작은 추가 영역은 버리고 앞 선택은 유지
+        if (V.selEl) V.selEl.remove();
+        const last = V.selPrev.pop();
+        V.sel = last.r;
+        V.selEl = last.el;
+        $('#sel-bar').hidden = false;
+      } else clearSel();
+    } else $('#sel-bar').hidden = false;
   } else if (mode === 'dragchk') {
     G.chkEl.classList.remove('dragging');
     renderMarks(G.chkItem.page);
@@ -1539,7 +1606,7 @@ scroller.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || Date.now() - lastTouch < 1000) return;
   e.preventDefault(); // 드래그할 때 글자·이미지 끌기 방지
   mouseDown = true;
-  gBegin(e.clientX, e.clientY, e.target, true);
+  gBegin(e.clientX, e.clientY, e.target, true, e.shiftKey);
 });
 window.addEventListener('mousemove', (e) => { if (mouseDown) gMove(e.clientX, e.clientY); });
 window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; gEnd(); } });
