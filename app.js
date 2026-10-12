@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v37';
+const BUILD = 'v38';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -548,7 +548,7 @@ function showHelp() {
     '■ 체크칸',
     '· 문제 번호 옆에 체크칸이 자동으로 생겨요',
     '· 탭할 때마다 빈칸 → V → W → 빈칸',
-    '· 위의 ☐ 버튼 (PC는 `): 새 체크칸 → 끌어서 위치 잡고 [고정] (` 또는 Enter) · 취소는 Esc',
+    '· 위의 ☐ 버튼 (PC는 ` 또는 S): 새 체크칸 → 끌어서 위치 잡고 [고정] (` 또는 Enter) · 취소는 Esc',
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
@@ -573,7 +573,7 @@ function showHelp() {
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
-    '· ` 체크칸 추가 (다시 ` 로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
+    '· ` 또는 S 체크칸 추가 (` 로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
     '',
     '· ↶ 되돌리기',
     '· 데이터는 폰 안에만 저장돼요. 메뉴에서 가끔 백업하세요.',
@@ -1619,7 +1619,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
   if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }
-  else if (e.code === 'Backquote') { e.preventDefault(); if (!e.repeat) { clearSel(); addCheckAndMove(); } } // ` 로 만들고 ` 로 고정
+  else if (e.code === 'Backquote' || e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) { clearSel(); addCheckAndMove(); } } // ` 또는 S로 만들고 ` 로 고정
   else if (e.key === 'Escape' && V.checkMode) setCheckMode(false);
 });
 
