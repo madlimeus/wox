@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v40';
+const BUILD = 'v41';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -585,6 +585,7 @@ function showHelp() {
 /* =========================================================
    뷰어
    ========================================================= */
+const TRI_H = 0.0095; // 주석 세모 세로 (페이지 높이 대비, 영역 크기와 무관)
 const BOX = 0.0243; // 체크칸 한 변 = 페이지 너비의 2.43%
 const MIN_Z = 0.5, MAX_Z = 5;
 const scroller = $('#scroller');
@@ -902,8 +903,8 @@ function renderMarks(pnum) {
     const b = it.type === 'note' ? blanksOver(it)[0] : null;
     // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
     if (it.type === 'note' && !(b && !rtI(b).revealed) && (!sameNotes || sameNotes[0] === it)) {
-      // 세모: 세로 = 겹친 빈칸 세로(없으면 주석 영역 세로)의 절반, 가로 = 세로와 같은 길이
-      const top = b ? b.y : it.y, h = (b ? b.h : it.h) / 2;
+      // 세모: 크기 고정 = 문제 한 줄 드래그 높이(페이지의 약 1.9%)의 절반, 가로 = 세로와 같은 길이
+      const top = b ? b.y : it.y, h = TRI_H;
       const tri = div('note-tri');
       tri.dataset.id = it.id;
       tri.style.left = it.x * 100 + '%';
