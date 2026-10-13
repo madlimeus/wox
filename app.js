@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v41';
+const BUILD = 'v43';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -568,7 +568,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · W 표시 지우기 · E 주석 수정 · Z 주석 달기 · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` · S · Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
@@ -1045,8 +1045,11 @@ function handleTap(target, x, y) {
 async function handleLongPress(target) {
   const markEl = target.closest('[data-id]');
   if (!markEl) return;
-  const it = byId(markEl.dataset.id);
+  let it = byId(markEl.dataset.id);
   if (!it) return;
+  // 메모에 붙은 주석·빈칸을 눌러도 메모 메뉴 (그 안에서 주석·빈칸도 관리)
+  const ownerMemo = it.g && it.type !== 'memo' ? groupOf(it).find((o) => o.type === 'memo') : null;
+  if (ownerMemo) it = ownerMemo;
   if (it.type === 'check') {
     if (V.checkMode) { removeItem(it.id); toast('체크칸을 지웠어요'); return; }
     const v = await sheet('체크칸', [
@@ -1104,17 +1107,55 @@ async function handleLongPress(target) {
     if (v === 'move') startMoveCheck(it);
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'memo') {
+    const grp = groupOf(it);
+    const note = grp.find((o) => o.type === 'note');
+    const blank = grp.find((o) => o.type === 'blank');
     const v = await sheet('메모', [
-      { label: '메모 위치 이동', value: 'move', key: 'Q' },
+      { label: '메모 위치 이동 (붙은 주석·빈칸 포함)', value: 'move', key: 'Q' },
+      note ? { label: '주석 수정', value: 'noteEdit', key: 'Z' } : { label: '이 메모에 주석 달기', value: 'note', key: 'Z' },
+      ...(note ? [{ label: '주석 삭제', value: 'noteDel', cls: 'danger', key: 'C' }] : []),
+      blank ? { label: '빈칸 삭제', value: 'blankDel', cls: 'danger', key: 'X' } : { label: '이 메모에 빈칸 추가', value: 'blank', key: 'X' },
       { label: '메모 수정', value: 'edit', key: 'E' },
-      { label: '메모 삭제', value: 'del', cls: 'danger', key: 'D' },
+      { label: '메모 삭제 (붙은 주석·빈칸까지)', value: 'del', cls: 'danger', key: 'D' },
     ]);
+    const drop = (x) => { snapshot(); V.items = V.items.filter((o) => o !== x); V.runtime.delete(x.g || x.id); renderMarks(it.page); saveMarks(); };
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'note' || v === 'blank') {
+      // 화면에 보이는 메모 크기에 맞춰 영역을 만들고, 메모와 한 묶음(g)으로 → 옮길 때 같이 움직임
+      const r = note || blank ? (({ page, x, y, w, h }) => ({ page, x, y, w, h }))(note || blank) : memoRect(it);
+      let text = '';
+      if (v === 'note') {
+        text = await promptBox('메모에 주석 달기', '', { multiline: true });
+        if (!text || !text.trim()) return;
+      }
+      snapshot();
+      if (!it.g) it.g = uid();
+      V.items.push({ id: uid(), type: v, ...r, g: it.g, ...(v === 'note' ? { text: text.trim() } : {}) });
+      renderMarks(it.page);
+      saveMarks();
+    } else if (v === 'noteEdit') {
+      const text = await promptBox('주석 수정', note.text, { multiline: true });
+      if (text !== null && text.trim()) { snapshot(); note.text = text.trim(); renderMarks(it.page); saveMarks(); }
+    } else if (v === 'noteDel') drop(note);
+    else if (v === 'blankDel') drop(blank);
     else if (v === 'edit') {
       const text = await promptBox('메모 수정', it.text, { multiline: true });
       if (text !== null && text.trim()) { snapshot(); it.text = text.trim(); renderMarks(it.page); saveMarks(); }
-    } else if (v === 'del') removeItem(it.id);
+    } else if (v === 'del') { // 메모에 붙인 주석·빈칸도 같이 지운다
+      snapshot();
+      V.items = V.items.filter((x) => !grp.includes(x));
+      renderMarks(it.page);
+      saveMarks();
+    }
   }
+}
+
+// 화면에 실제로 보이는 메모 크기 (페이지 대비 비율)
+function memoRect(it) {
+  const el = V.pages[it.page - 1].layer.querySelector(`.memo[data-id="${it.id}"]`);
+  const pr = V.pages[it.page - 1].el.getBoundingClientRect();
+  const mr = el ? el.getBoundingClientRect() : null;
+  return { page: it.page, x: it.x, y: it.y, w: mr ? mr.width / pr.width : it.w, h: mr ? mr.height / pr.height : it.h };
 }
 
 /* ---- 표시 이동 (체크칸·주석·빈칸 공통: 메뉴 → 끌기/클릭 → ` 또는 Enter 고정 · Esc 취소) ----
