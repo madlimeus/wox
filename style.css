@@ -132,6 +132,7 @@ button { font: inherit; color: inherit; }
 .chk.s1 { color: var(--v); border-color: rgba(31,111,235,.35); }
 .chk.s2 { color: var(--w); border-color: rgba(214,69,69,.35); }
 .chk.s3 { color: #222; border-color: rgba(40,45,60,.45); }
+.chk.s4 { color: #2f9a5c; border-color: rgba(47,154,92,.35); } /* E: 차분한 초록 (V·W와 비슷한 진하기) */
 .chk.dragging { opacity: .6; }
 .checkmode .chk { box-shadow: 0 0 0 .4cqw rgba(255,193,69,.7); }
 
