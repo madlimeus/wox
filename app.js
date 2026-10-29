@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v46';
+const BUILD = 'v47';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -552,9 +552,10 @@ function showHelp() {
     '',
     '■ 주석 · 빈칸',
     '· 글자 위를 꾹 누른 채로 끌면 영역이 선택돼요',
-    '· 아래 [주석] [빈칸] [빈칸+주석] [메모] [형광] 중 하나를 누르세요',
+    '· 아래 [주석] [빈칸] [빈칸+주석] [메모] [형광] [가림] 중 하나를 누르세요',
     '· 메모: 누르지 않아도 글자가 바로 보이는 메모지',
     '· 형광: 선택 영역을 형광펜처럼 칠하기',
+    '· 가림(Q): 암기용 임시 가림막. 끌면 이동, 모서리로 크기 조절, 선택 후 Esc(또는 ×)로 없앰. 저장 안 되고 PDF를 닫으면 사라짐',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
     '· 주석 굵게: 글자 고르고 Ctrl+B (또는 [B 굵게] 버튼) → **글자**',
@@ -571,7 +572,7 @@ function showHelp() {
     '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · E E표시(네모)/수정 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` · S · Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
-    '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Esc 취소',
+    '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Q 가림막 · Esc 취소',
     '· 드래그 후 Shift+드래그: 영역 추가 → 한 묶음으로 만들어져 한 번에 열리고 닫힘',
     '· 주석 입력: Enter 저장 · Shift+Enter 줄바꿈',
     '· ` 또는 S 체크칸 추가 (` 또는 S로 고정) · A 100%↔200% · Ctrl+Z 되돌리기',
@@ -595,7 +596,7 @@ const V = {
   file: null, doc: null, pages: [], token: 0,
   zoom: 1, scale: 1, items: [], autoDone: false,
   checkMode: false, undo: [], runtime: new Map(),
-  sel: null, selEl: null, selPrev: [], io: null,
+  sel: null, selEl: null, selPrev: [], io: null, covers: [], coverActive: null,
 };
 
 async function openFile(id) {
@@ -614,6 +615,7 @@ async function openFile(id) {
   V.autoDone = m.autoDone;
   V.undo = [];
   V.runtime.clear();
+  clearCovers();
   clearSel();
   setCheckMode(false);
   try {
@@ -655,11 +657,12 @@ function buildPages() {
     el.dataset.page = pg.num;
     const cv = document.createElement('canvas');
     const layer = div('layer');
+    const coverLayer = div('cover-layer');
     const num = div('page-num');
     num.textContent = pg.num;
-    el.append(cv, layer, num);
+    el.append(cv, layer, coverLayer, num);
     pagesEl.appendChild(el);
-    Object.assign(pg, { el, canvas: cv, layer, rendered: null, visible: false, task: null });
+    Object.assign(pg, { el, canvas: cv, layer, coverLayer, rendered: null, visible: false, task: null });
     V.io.observe(el);
   }
   layoutPages();
@@ -771,6 +774,7 @@ function saveViewState() {
 async function closeViewer() {
   if (!V.file) { showScreen('library'); return; }
   if (V.moving) endMoveCheck(true);
+  clearCovers();
   saveViewState();
   await flushMarks();
   V.token++;
@@ -1018,6 +1022,7 @@ function closeAllNotes() {
 }
 
 function handleTap(target, x, y) {
+  setActiveCover(null);
   if (V.sel) { clearSel(); return; }
   const markEl = target.closest('[data-id]');
   const pageEl = target.closest('.page');
@@ -1312,6 +1317,10 @@ $('#btn-sel-blank').onclick = () => {
 // 빈칸 + 주석을 같은 영역에 한 번에 (되돌리기 한 번에 둘 다 취소)
 // 메모: 선택 영역에 글자가 바로 보이는 메모지
 // 형광펜: 선택 영역을 칠한다
+$('#btn-sel-cover').onclick = () => {
+  const rs = clearSel();
+  if (rs) addCovers(rs);
+};
 $('#btn-sel-hl').onclick = () => {
   const rs = clearSel();
   if (rs) addItems(makeItems(rs, 'hl'));
@@ -1339,6 +1348,94 @@ $('#btn-sel-note').onclick = async () => {
   const rs = clearSel() || [s];
   if (text && text.trim()) addItems(makeItems(rs, 'note', { text: text.trim() }));
 };
+
+/* ---- 가림막: 암기할 때 쓰는 임시 가리개 ----
+   저장·되돌리기 기록에 남지 않고, PDF를 닫으면 사라진다.
+   끌기 = 이동, 모서리 손잡이 = 크기 조절, 선택 후 Esc(또는 ×) = 없애기 */
+const COVER_MIN = 0.015;
+function clearCovers() {
+  for (const c of V.covers || []) if (c.el) c.el.remove();
+  V.covers = [];
+  V.coverActive = null;
+}
+function setActiveCover(c) {
+  if (V.coverActive === c) return;
+  if (V.coverActive && V.coverActive.el) V.coverActive.el.classList.remove('active');
+  V.coverActive = c;
+  if (c && c.el) c.el.classList.add('active');
+}
+function removeCover(c) {
+  if (c.el) c.el.remove();
+  V.covers = V.covers.filter((o) => o !== c);
+  if (V.coverActive === c) V.coverActive = null;
+}
+function placeCover(c) {
+  Object.assign(c.el.style, { left: c.x * 100 + '%', top: c.y * 100 + '%', width: c.w * 100 + '%', height: c.h * 100 + '%' });
+}
+function addCovers(rects) {
+  let last = null;
+  for (const r of rects) {
+    const c = { id: uid(), page: r.page, x: r.x, y: r.y, w: r.w, h: r.h };
+    V.covers.push(c);
+    drawCover(c);
+    last = c;
+  }
+  setActiveCover(last);
+}
+function drawCover(c) {
+  const el = div('cover');
+  c.el = el;
+  for (const k of ['nw', 'ne', 'sw', 'se']) {
+    const h = div('cover-h ' + k);
+    h.dataset.c = k;
+    el.appendChild(h);
+  }
+  const x = document.createElement('button');
+  x.className = 'cover-x';
+  x.textContent = '×';
+  x.title = '가림막 없애기 (Esc)';
+  el.appendChild(x);
+  placeCover(c);
+  V.pages[c.page - 1].coverLayer.appendChild(el);
+
+  // 화면 이동·선택 제스처가 가로채지 않게 막는다
+  el.addEventListener('mousedown', (e) => e.stopPropagation());
+  el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+
+  let st = null;
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.stopPropagation();
+    if (e.target.closest('.cover-x')) { e.preventDefault(); removeCover(c); return; }
+    e.preventDefault();
+    setActiveCover(c);
+    const h = e.target.closest('.cover-h');
+    st = { px: e.clientX, py: e.clientY, mode: h ? h.dataset.c : 'move', c0: { x: c.x, y: c.y, w: c.w, h: c.h },
+      pr: V.pages[c.page - 1].el.getBoundingClientRect() };
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!st) return;
+    const dx = (e.clientX - st.px) / st.pr.width, dy = (e.clientY - st.py) / st.pr.height;
+    const o = st.c0;
+    if (st.mode === 'move') {
+      c.x = clamp(o.x + dx, 0, 1 - o.w);
+      c.y = clamp(o.y + dy, 0, 1 - o.h);
+    } else {
+      let l = o.x, t = o.y, r = o.x + o.w, b = o.y + o.h;
+      if (st.mode.includes('w')) l = clamp(o.x + dx, 0, r - COVER_MIN);
+      if (st.mode.includes('e')) r = clamp(r + dx, l + COVER_MIN, 1);
+      if (st.mode.includes('n')) t = clamp(o.y + dy, 0, b - COVER_MIN);
+      if (st.mode.includes('s')) b = clamp(b + dy, t + COVER_MIN, 1);
+      Object.assign(c, { x: l, y: t, w: r - l, h: b - t });
+    }
+    placeCover(c);
+  });
+  const end = () => { st = null; };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
 
 /* ---- 체크칸 배치 모드 ---- */
 function setCheckMode(on) {
@@ -1686,7 +1783,7 @@ scroller.addEventListener('wheel', (e) => {
 
 /* =========================================================
    단축키 (한글 입력 상태여도 동작하도록 e.code 사용)
-   - 영역 선택 후: Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모 · D 형광펜 · Esc 취소
+   - 영역 선택 후: Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모 · D 형광펜 · Q 가림막 · Esc 취소
    - Ctrl+Z 되돌리기 · A 100%↔200%
    - 입력창: Enter 저장 · Shift+Enter 줄바꿈 · Esc 닫기
    ========================================================= */
@@ -1721,12 +1818,18 @@ document.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); $('#btn-undo').click(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (V.coverActive && e.key === 'Escape' && !(V.sel && !$('#sel-bar').hidden)) { // 선택한 가림막 없애기
+    e.preventDefault();
+    removeCover(V.coverActive);
+    return;
+  }
   if (V.sel && !$('#sel-bar').hidden) {
     if (e.code === 'KeyZ') { e.preventDefault(); $('#btn-sel-note').click(); return; }
     if (e.code === 'KeyX') { e.preventDefault(); $('#btn-sel-blank').click(); return; }
     if (e.code === 'KeyC') { e.preventDefault(); $('#btn-sel-both').click(); return; }
     if (e.code === 'KeyA') { e.preventDefault(); $('#btn-sel-memo').click(); return; }
     if (e.code === 'KeyD') { e.preventDefault(); $('#btn-sel-hl').click(); return; }
+    if (e.code === 'KeyQ') { e.preventDefault(); $('#btn-sel-cover').click(); return; }
     if (e.key === 'Escape') { e.preventDefault(); clearSel(); return; }
   }
   if (e.code === 'KeyA') { e.preventDefault(); toggleZoom(); }

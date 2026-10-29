@@ -1,5 +1,5 @@
 // WOX 오프라인 캐시. 앱 파일을 고치면 VERSION을 올린다.
-const VERSION = 'wox-v46';
+const VERSION = 'wox-v47';
 const ASSETS = [
   './',
   'index.html',
