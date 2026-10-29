@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v48';
+const BUILD = 'v49';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -569,7 +569,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · X X표시/빈칸 추가 · E E표시(네모)/수정 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · R 크기 조절(메모·빈칸·주석) · X X표시/빈칸 추가 · E E표시(네모)/수정 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` · S · Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Q 가림막 · Esc 취소',
@@ -774,6 +774,7 @@ function saveViewState() {
 async function closeViewer() {
   if (!V.file) { showScreen('library'); return; }
   if (V.moving) endMoveCheck(true);
+  if (V.resizing) endResize(true);
   clearCovers();
   saveViewState();
   await flushMarks();
@@ -821,7 +822,7 @@ function snapshot() {
   if (V.undo.length > 80) V.undo.shift();
 }
 $('#btn-undo').onclick = () => {
-  if (V.moving) return;
+  if (V.moving || V.resizing) return;
   if (!V.undo.length) { toast('되돌릴 게 없어요'); return; }
   V.items = JSON.parse(V.undo.pop());
   renderAllMarks();
@@ -885,7 +886,8 @@ function renderMarks(pnum) {
       m.style.left = it.x * 100 + '%';
       m.style.top = it.y * 100 + '%';
       m.innerHTML = noteHtml(it.text);
-      if (V.moving && V.moving.ids.includes(it.id)) m.classList.add('moving');
+      if (it.s && it.s !== 1) m.style.setProperty('--ms', it.s); // 크기 조절한 메모만 배율 적용 (기본 1)
+      if ((V.moving && V.moving.ids.includes(it.id)) || (V.resizing && V.resizing.ids.includes(it.id))) m.classList.add('moving');
       L.appendChild(m);
       continue;
     }
@@ -902,7 +904,7 @@ function renderMarks(pnum) {
       d.classList.add('open');
       if (!sameNotes || sameNotes[sameNotes.length - 1] === it) pops.push(it); // 묶음은 맨 아래 영역 밑에 하나만
     }
-    if (V.moving && V.moving.ids.includes(it.id)) d.classList.add('moving');
+    if ((V.moving && V.moving.ids.includes(it.id)) || (V.resizing && V.resizing.ids.includes(it.id))) d.classList.add('moving');
     L.appendChild(d);
     const b = it.type === 'note' ? blanksOver(it)[0] : null;
     // 빈칸이 가려져 있으면 세모도 숨긴다 (빈칸을 열어야 주석 표시가 보임)
@@ -1065,6 +1067,7 @@ async function handleLongPress(target) {
       { label: '체크칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'resize') startResize(it);
     else if (v === 'x') { snapshot(); it.state = 3; renderMarks(it.page); saveMarks(); }
     else if (v === 'e') { snapshot(); it.state = 4; renderMarks(it.page); saveMarks(); }
     else if (v === 'reset') { snapshot(); it.state = 0; renderMarks(it.page); saveMarks(); }
@@ -1072,11 +1075,13 @@ async function handleLongPress(target) {
   } else if (it.type === 'note') {
     const v = await sheet('주석', [
       { label: '주석 위치 이동', value: 'move', key: 'Q' },
+      { label: '주석 크기 조절', value: 'resize', key: 'R' },
       { label: '이 주석에 빈칸 추가', value: 'blank', key: 'X' },
       { label: '주석 수정', value: 'edit', key: 'E' },
       { label: '주석 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'resize') startResize(it);
     else if (v === 'blank') {
       // 주석과 같은 자리·크기로 빈칸 → C로 만든 빈칸+주석 쌍과 똑같이 동작
       if (V.items.some((o) => o.type === 'blank' && sameRect(o, it))) { toast('이미 빈칸이 있어요'); return; }
@@ -1095,10 +1100,12 @@ async function handleLongPress(target) {
   } else if (it.type === 'blank') {
     const v = await sheet('빈칸', [
       { label: '빈칸 위치 이동', value: 'move', key: 'Q' },
+      { label: '빈칸 크기 조절', value: 'resize', key: 'R' },
       { label: '이 빈칸에 주석 달기', value: 'note', key: 'Z' },
       { label: '빈칸 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'resize') startResize(it);
     else if (v === 'note') {
       const text = await promptBox('주석 달기', '', { multiline: true });
       const blanks = groupOf(it).filter((o) => o.type === 'blank');
@@ -1112,6 +1119,7 @@ async function handleLongPress(target) {
       { label: '형광펜 삭제', value: 'del', cls: 'danger', key: 'D' },
     ]);
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'resize') startResize(it);
     else if (v === 'del') removeItem(it.id);
   } else if (it.type === 'memo') {
     const grp = groupOf(it);
@@ -1119,6 +1127,7 @@ async function handleLongPress(target) {
     const blank = grp.find((o) => o.type === 'blank');
     const v = await sheet('메모', [
       { label: '메모 위치 이동 (붙은 주석·빈칸 포함)', value: 'move', key: 'Q' },
+      { label: '메모 크기 조절 (글자도 같이)', value: 'resize', key: 'R' },
       note ? { label: '주석 수정', value: 'noteEdit', key: 'Z' } : { label: '이 메모에 주석 달기', value: 'note', key: 'Z' },
       ...(note ? [{ label: '주석 삭제', value: 'noteDel', cls: 'danger', key: 'C' }] : []),
       blank ? { label: '빈칸 삭제', value: 'blankDel', cls: 'danger', key: 'X' } : { label: '이 메모에 빈칸 추가', value: 'blank', key: 'X' },
@@ -1127,6 +1136,7 @@ async function handleLongPress(target) {
     ]);
     const drop = (x) => { snapshot(); V.items = V.items.filter((o) => o !== x); V.runtime.delete(x.g || x.id); renderMarks(it.page); saveMarks(); };
     if (v === 'move') startMoveCheck(it);
+    else if (v === 'resize') startResize(it);
     else if (v === 'note' || v === 'blank') {
       // 화면에 보이는 메모 크기에 맞춰 영역을 만들고, 메모와 한 묶음(g)으로 → 옮길 때 같이 움직임
       const r = note || blank ? (({ page, x, y, w, h }) => ({ page, x, y, w, h }))(note || blank) : memoRect(it);
@@ -1257,7 +1267,110 @@ function endMoveCheck(keep) {
   for (const p of pages) renderMarks(p);
   if (keep) { saveMarks(); toast('이 위치에 고정했어요', 1500); }
 }
-$('#btn-move-ok').onclick = () => endMoveCheck(true);
+/* ---- 크기 조절 (메모·빈칸·주석): 메뉴 R → 모서리 안쪽 끌기 → ` · S · Enter 확정 / Esc 취소 ----
+   메모는 글자까지 같은 비율로(배율 s 저장, 기본 1 → 기존 메모는 그대로). 같은 자리 빈칸+주석 쌍과
+   메모에 붙은 주석·빈칸은 함께 바뀐다 */
+const RZ_MIN = 0.008;
+function startResize(it) {
+  clearSel();
+  setActiveCover(null);
+  snapshot();
+  let group;
+  if (it.type === 'memo') group = groupOf(it);
+  else group = [it, ...V.items.filter((o) => o !== it && (o.type === 'blank' || o.type === 'note') && sameRect(o, it))];
+  for (const g of group) if (g.type === 'note') Object.assign(rtI(g), { open: false, justClosed: false });
+  const base = it.type === 'memo' ? memoRect(it) : { x: it.x, y: it.y, w: it.w, h: it.h };
+  V.resizing = {
+    id: it.id, ids: group.map((g) => g.id), base,
+    orig: group.map((g) => ({ id: g.id, x: g.x, y: g.y, w: g.w, h: g.h, s: g.s })),
+  };
+  $('#move-bar .move-hint').textContent = '모서리를 끌어 크기 조절';
+  $('#move-bar').hidden = false;
+  drawResizeFrame();
+  renderMarks(it.page);
+}
+function rzFrameRect() {
+  const it = byId(V.resizing.id);
+  return it.type === 'memo' ? memoRect(it) : { x: it.x, y: it.y, w: it.w, h: it.h };
+}
+function placeResizeFrame() {
+  const f = V.resizing && V.resizing.el;
+  if (!f) return;
+  const r = rzFrameRect();
+  Object.assign(f.style, { left: r.x * 100 + '%', top: r.y * 100 + '%', width: r.w * 100 + '%', height: r.h * 100 + '%' });
+}
+function drawResizeFrame() {
+  const it = byId(V.resizing.id);
+  const f = div('rz-frame');
+  V.resizing.el = f;
+  for (const k of ['nw', 'ne', 'sw', 'se']) {
+    const h = div('rz-h ' + k);
+    h.dataset.c = k;
+    f.appendChild(h);
+  }
+  V.pages[it.page - 1].coverLayer.appendChild(f);
+  placeResizeFrame();
+  let st = null;
+  f.addEventListener('mousedown', (e) => e.stopPropagation());
+  f.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  f.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest('.rz-h');
+    if (!h || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const b0 = rzFrameRect();
+    st = { px: e.clientX, py: e.clientY, c: h.dataset.c, b0, pr: V.pages[it.page - 1].el.getBoundingClientRect(),
+      items: V.resizing.ids.map(byId).filter(Boolean).map((g) => ({ g, x: g.x, y: g.y, w: g.w, h: g.h, s: g.s || 1 })) };
+    h.setPointerCapture(e.pointerId);
+  });
+  f.addEventListener('pointermove', (e) => {
+    if (!st) return;
+    const dx = (e.clientX - st.px) / st.pr.width, dy = (e.clientY - st.py) / st.pr.height;
+    const o = st.b0, c = st.c;
+    let l = o.x, t = o.y, r = o.x + o.w, b = o.y + o.h;
+    if (c.includes('w')) l = clamp(o.x + dx, 0, r - RZ_MIN);
+    if (c.includes('e')) r = clamp(r + dx, l + RZ_MIN, 1);
+    if (c.includes('n')) t = clamp(o.y + dy, 0, b - RZ_MIN);
+    if (c.includes('s')) b = clamp(b + dy, t + RZ_MIN, 1);
+    if (it.type === 'memo') {
+      // 메모: 가로 변화 비율로 통째로(글자 포함) 확대·축소, 잡은 모서리 반대편 고정
+      const k = clamp((r - l) / o.w, 0.3, 6);
+      const nw = o.w * k, nh = o.h * k;
+      const nx = c.includes('w') ? o.x + o.w - nw : o.x;
+      const ny = c.includes('n') ? o.y + o.h - nh : o.y;
+      for (const q of st.items) {
+        q.g.x = nx + (q.x - o.x) * k;
+        q.g.y = ny + (q.y - o.y) * k;
+        if (q.g.type === 'memo') q.g.s = +(q.s * k).toFixed(3);
+        else { q.g.w = q.w * k; q.g.h = q.h * k; }
+      }
+    } else {
+      for (const q of st.items) Object.assign(q.g, { x: l, y: t, w: r - l, h: b - t });
+    }
+    renderMarks(it.page);
+    placeResizeFrame();
+  });
+  const end = () => { st = null; };
+  f.addEventListener('pointerup', end);
+  f.addEventListener('pointercancel', end);
+}
+function endResize(keep) {
+  const R = V.resizing;
+  if (!R) return;
+  const it = byId(R.id);
+  if (!keep) {
+    for (const o of R.orig) { const g = byId(o.id); if (g) Object.assign(g, o); }
+    V.undo.pop();
+  }
+  if (R.el) R.el.remove();
+  V.resizing = null;
+  $('#move-bar').hidden = true;
+  $('#move-bar .move-hint').textContent = '끌어서 옮기기';
+  if (it) renderMarks(it.page);
+  if (keep) { saveMarks(); toast('크기를 바꿨어요', 1500); }
+}
+
+$('#btn-move-ok').onclick = () => (V.resizing ? endResize(true) : endMoveCheck(true));
 
 // 새 체크칸: 화면 가운데에 만들고 바로 이동 모드 (위치 잡고 Enter 고정 / Esc 취소)
 function addCheckAndMove() {
@@ -1283,7 +1396,7 @@ function addCheckAndMove() {
   V.items.push(it);
   startMoveCheck(it, true);
 }
-$('#btn-move-cancel').onclick = () => endMoveCheck(false);
+$('#btn-move-cancel').onclick = () => (V.resizing ? endResize(false) : endMoveCheck(false));
 
 function addCheckAt(pageEl, x, y) {
   const r = pageEl.getBoundingClientRect();
@@ -1557,6 +1670,7 @@ const G = { mode: null, timer: 0 };
 
 function gBegin(x, y, target, mouse = false, shift = false) {
   clearTimeout(G.timer);
+  if (V.resizing) { G.mode = null; return; } // 크기 조절 중: 모서리 손잡이만 동작
   if (V.moving) { // 체크칸 이동 모드: 누른 곳으로 바로 옮기고 끄는 대로 따라감
     G.mode = 'movechk';
     moveCheckTo(x, y);
@@ -1807,6 +1921,11 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (!V.file) return;
+  if (V.resizing) {
+    if (e.key === 'Enter' || e.code === 'Backquote' || e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) endResize(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); endResize(false); }
+    return;
+  }
   if (V.moving) {
     const step = e.shiftKey ? 0.01 : 0.002;
     const arrows = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
