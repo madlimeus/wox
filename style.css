@@ -280,21 +280,12 @@ body.has-kbd kbd { display: inline-block; }
   position: absolute; pointer-events: auto; touch-action: none; cursor: move;
   background: #cfd9c6; border: 1px solid #b3c1a8; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.12);
 }
-.cover.active { outline: 2px solid #6f8f62; outline-offset: 1px; }
-.cover-h {
-  position: absolute; width: 12px; height: 12px; display: none; box-sizing: border-box;
-  background: #fff; border: 2px solid #6f8f62; border-radius: 3px;
-}
-.cover.active .cover-h { display: block; }
-.cover-h.nw { left: -7px; top: -7px; cursor: nwse-resize; }
-.cover-h.ne { right: -7px; top: -7px; cursor: nesw-resize; }
-.cover-h.sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
-.cover-h.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
-.cover-x {
-  position: absolute; right: -8px; top: -30px; width: 24px; height: 24px; display: none;
-  align-items: center; justify-content: center; padding: 0; cursor: pointer;
-  border: 0; border-radius: 50%; background: #6f8f62; color: #fff; font-size: 16px; line-height: 1;
-}
-.cover.active .cover-x { display: flex; }
-@media (pointer: coarse) { .cover-h { width: 20px; height: 20px; } .cover-h.nw, .cover-h.sw { left: -11px; } .cover-h.ne, .cover-h.se { right: -11px; } .cover-h.nw, .cover-h.ne { top: -11px; } .cover-h.sw, .cover-h.se { bottom: -11px; } }
+.cover.active { box-shadow: inset 0 0 0 2px #8aa57d; } /* 선택 표시는 안쪽에만 → 바깥 글자를 가리지 않음 */
+/* 크기 조절 손잡이: 안 보이고 가림막 모서리 안쪽에만 있음 (커서만 바뀜) */
+.cover-h { position: absolute; width: 14px; height: 14px; background: transparent; }
+.cover-h.nw { left: 0; top: 0; cursor: nwse-resize; }
+.cover-h.ne { right: 0; top: 0; cursor: nesw-resize; }
+.cover-h.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+.cover-h.se { right: 0; bottom: 0; cursor: nwse-resize; }
+@media (pointer: coarse) { .cover-h { width: 22px; height: 22px; } }
 .sel-bar { flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100vw - 16px); box-sizing: border-box; } /* 한 줄에 다 들어가면 한 줄, 넘치면 접기 */

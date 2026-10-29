@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v47';
+const BUILD = 'v48';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -555,7 +555,7 @@ function showHelp() {
     '· 아래 [주석] [빈칸] [빈칸+주석] [메모] [형광] [가림] 중 하나를 누르세요',
     '· 메모: 누르지 않아도 글자가 바로 보이는 메모지',
     '· 형광: 선택 영역을 형광펜처럼 칠하기',
-    '· 가림(Q): 암기용 임시 가림막. 끌면 이동, 모서리로 크기 조절, 선택 후 Esc(또는 ×)로 없앰. 저장 안 되고 PDF를 닫으면 사라짐',
+    '· 가림(Q): 암기용 임시 가림막. 끌면 이동, 모서리 안쪽을 끌면 크기 조절, 클릭 후 Esc · 우클릭 · (폰) 꾹 누르기로 없앰. 저장 안 되고 PDF를 닫으면 사라짐',
     '· 빈칸: 탭하면 보이고, 다시 탭하면 가려져요',
     '· 주석: 주황 세모 표시. 탭하면 열리고 다시 탭하면 닫혀요',
     '· 주석 굵게: 글자 고르고 Ctrl+B (또는 [B 굵게] 버튼) → **글자**',
@@ -1351,7 +1351,7 @@ $('#btn-sel-note').onclick = async () => {
 
 /* ---- 가림막: 암기할 때 쓰는 임시 가리개 ----
    저장·되돌리기 기록에 남지 않고, PDF를 닫으면 사라진다.
-   끌기 = 이동, 모서리 손잡이 = 크기 조절, 선택 후 Esc(또는 ×) = 없애기 */
+   끌기 = 이동, 모서리 안쪽 = 크기 조절, 선택 후 Esc · 우클릭 · (폰) 꾹 누르기 = 없애기 */
 const COVER_MIN = 0.015;
 function clearCovers() {
   for (const c of V.covers || []) if (c.el) c.el.remove();
@@ -1390,33 +1390,32 @@ function drawCover(c) {
     h.dataset.c = k;
     el.appendChild(h);
   }
-  const x = document.createElement('button');
-  x.className = 'cover-x';
-  x.textContent = '×';
-  x.title = '가림막 없애기 (Esc)';
-  el.appendChild(x);
+  el.title = '끌어서 이동 · 모서리 끌어서 크기 조절 · 클릭 후 Esc 또는 우클릭으로 없애기';
   placeCover(c);
   V.pages[c.page - 1].coverLayer.appendChild(el);
 
   // 화면 이동·선택 제스처가 가로채지 않게 막는다
   el.addEventListener('mousedown', (e) => e.stopPropagation());
   el.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
-  el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); removeCover(c); }); // 우클릭 = 없애기
 
   let st = null;
   el.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.stopPropagation();
-    if (e.target.closest('.cover-x')) { e.preventDefault(); removeCover(c); return; }
     e.preventDefault();
     setActiveCover(c);
     const h = e.target.closest('.cover-h');
     st = { px: e.clientX, py: e.clientY, mode: h ? h.dataset.c : 'move', c0: { x: c.x, y: c.y, w: c.w, h: c.h },
       pr: V.pages[c.page - 1].el.getBoundingClientRect() };
     el.setPointerCapture(e.pointerId);
+    if (e.pointerType !== 'mouse') {
+      st.hold = setTimeout(() => { if (st && !st.moved) { st = null; if (navigator.vibrate) navigator.vibrate(15); removeCover(c); } }, 600);
+    }
   });
   el.addEventListener('pointermove', (e) => {
     if (!st) return;
+    if (!st.moved && Math.hypot(e.clientX - st.px, e.clientY - st.py) > 6) { st.moved = true; clearTimeout(st.hold); }
     const dx = (e.clientX - st.px) / st.pr.width, dy = (e.clientY - st.py) / st.pr.height;
     const o = st.c0;
     if (st.mode === 'move') {
@@ -1432,7 +1431,7 @@ function drawCover(c) {
     }
     placeCover(c);
   });
-  const end = () => { st = null; };
+  const end = () => { if (st) clearTimeout(st.hold); st = null; };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
 }
