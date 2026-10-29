@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v49';
+const BUILD = 'v50';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -569,7 +569,7 @@ function showHelp() {
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
-    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · R 크기 조절(메모·빈칸·주석) · X X표시/빈칸 추가 · E E표시(네모)/수정 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
+    '· 우클릭: 표시 수정 · 삭제 메뉴 (메뉴에서 Q 위치 이동 · R 크기 조절(메모·빈칸·주석, R·`·S·Enter로 확정) · X X표시/빈칸 추가 · E E표시(네모)/수정 · W 표시 지우기 · E 수정 · Z 주석 달기(빈칸·메모) · D 삭제)',
     '· 체크칸 우클릭 → 체크칸 이동: 끌어서 옮기고 ` · S · Enter 고정 · Esc 취소 · 방향키 미세조정',
     '· 오른쪽 버튼 누른 채 끌기: 화면 잡고 이동',
     '· 선택 후 Z 주석 · X 빈칸 · C 빈칸+주석 · A 메모(바로 보임) · D 형광펜 · Q 가림막 · Esc 취소',
@@ -1922,7 +1922,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (!V.file) return;
   if (V.resizing) {
-    if (e.key === 'Enter' || e.code === 'Backquote' || e.code === 'KeyS') { e.preventDefault(); if (!e.repeat) endResize(true); }
+    if (e.key === 'Enter' || e.code === 'Backquote' || e.code === 'KeyS' || e.code === 'KeyR') { e.preventDefault(); if (!e.repeat) endResize(true); } // R로 시작 → R로 확정
     else if (e.key === 'Escape') { e.preventDefault(); endResize(false); }
     return;
   }
