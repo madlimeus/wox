@@ -39,7 +39,13 @@ button { font: inherit; color: inherit; }
 .bar-actions { display: flex; gap: 4px; align-items: center; }
 .title-wrap { flex: 1; min-width: 0; }
 .doc-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.page-ind { font-size: 12px; opacity: .75; }
+.page-ind { font-size: 12px; opacity: .75; cursor: pointer; display: inline-block; }
+.page-ind:hover { opacity: 1; text-decoration: underline; }
+.page-ind.editing { opacity: 1; text-decoration: none; }
+.page-input {
+  width: 4.2em; font: inherit; font-size: 13px; padding: 1px 4px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,.6); background: #fff; color: var(--text);
+}
 
 .icon-btn {
   width: 40px; height: 40px; border: 0; border-radius: 10px;

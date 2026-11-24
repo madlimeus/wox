@@ -2,7 +2,7 @@
 
 /* 화면(index.html)과 코드(app.js) 버전이 섞여 받아졌으면 한 번 새로고침한다.
    배포할 때마다 BUILD, index.html의 wox-build, sw.js의 VERSION을 같이 올린다. */
-const BUILD = 'v50';
+const BUILD = 'v51';
 (function checkBuild() {
   const m = document.querySelector('meta[name="wox-build"]');
   if ((m && m.content) === BUILD) return;
@@ -566,6 +566,7 @@ function showHelp() {
     '■ 기타',
     '· 두 손가락으로 벌리면 확대, 오므리면 축소',
     '· 위의 100% 버튼: 100% ↔ 200% 바로 전환',
+    '· 왼쪽 위 쪽수(예: 3 / 12쪽)를 누르면 원하는 쪽 입력 → Enter로 바로 이동',
     '',
     '■ PC (마우스 · 키보드)',
     '· 그냥 드래그하면 영역 선택',
@@ -718,13 +719,56 @@ async function renderPage(pg) {
 }
 
 function updatePageInd() {
-  if (!V.pages.length) return;
+  if (!V.pages.length || $('#page-ind').classList.contains('editing')) return;
   const mid = scroller.scrollTop + scroller.clientHeight / 3;
   let cur = 1;
   for (const pg of V.pages) if (pg.el.offsetTop <= mid) cur = pg.num;
   $('#page-ind').textContent = `${cur} / ${V.pages.length}쪽`;
   $('#btn-zoom').textContent = `${Math.round(V.zoom * 100)}%`;
 }
+
+// 원하는 쪽으로 바로 이동
+function goToPage(n) {
+  const pg = V.pages[clamp(Math.round(n), 1, V.pages.length) - 1];
+  if (!pg) return;
+  scroller.scrollTop = pg.el.offsetTop - 8;
+  updatePageInd();
+}
+// 왼쪽 위 "3 / 12쪽"을 누르면 쪽수 입력칸 → Enter로 이동, Esc로 취소
+$('#page-ind').onclick = () => {
+  const ind = $('#page-ind');
+  if (!V.pages.length || ind.classList.contains('editing')) return;
+  const cur = parseInt(ind.textContent, 10) || 1;
+  ind.classList.add('editing');
+  ind.innerHTML = '';
+  const inp = document.createElement('input');
+  inp.type = 'number';
+  inp.inputMode = 'numeric';
+  inp.min = 1;
+  inp.max = V.pages.length;
+  inp.value = cur;
+  inp.className = 'page-input';
+  const tail = document.createElement('span');
+  tail.textContent = ` / ${V.pages.length}쪽`;
+  ind.append(inp, tail);
+  inp.focus();
+  inp.select();
+  let done = false;
+  const finish = (go) => {
+    if (done) return;
+    done = true;
+    const n = parseInt(inp.value, 10);
+    ind.classList.remove('editing');
+    if (go && n) goToPage(n);
+    else updatePageInd();
+  };
+  inp.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // 단축키(A 확대 등)가 동작하지 않게
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  inp.addEventListener('blur', () => finish(true));
+};
 
 // 100% ↔ 200% 바로 전환 (화면 가운데를 기준으로)
 function toggleZoom() {
